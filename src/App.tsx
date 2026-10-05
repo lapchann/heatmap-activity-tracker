@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { calendarDate } from '../shared/dates';
+import { calendarDate, currentStreak } from '../shared/dates';
 import type { Dashboard } from '../shared/types';
 import { requestDashboard } from './api';
 import { Heatmap } from './Heatmap';
 import { RoutineChecklist } from './RoutineChecklist';
+import { RoutineManagement } from './RoutineManagement';
+import { StreakCard } from './StreakCard';
+import { HeatmapEditor } from './HeatmapEditor';
 
 export function App() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -11,6 +14,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const inFlight = useRef(false);
+  const [editingDate, setEditingDate] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
@@ -62,15 +66,32 @@ export function App() {
     }
   }
 
-  function toggle(id: number, completed: boolean) {
+  function toggle(id: number, date: string, completed: boolean, todayOnly = false) {
     if (!dashboard) return;
-    const routines = dashboard.routines.map((routine) => routine.id === id ? { ...routine, completed } : routine);
-    const count = routines.filter((routine) => routine.completed).length;
-    const optimistic = { ...dashboard, routines, days: dashboard.days.map((day) => day.date === dashboard.today ? { ...day, completed: count } : day) };
-    void mutate(`/api/routines/${id}/completion`, 'PUT', { date: dashboard.today, completed }, optimistic);
+    const heatmapRoutine = dashboard.heatmapRoutines.find((routine) => routine.id === id);
+    const optimistic: Dashboard = { ...dashboard };
+    if (heatmapRoutine) {
+      optimistic.heatmapRoutines = dashboard.heatmapRoutines.map((r) => r.id === id && date === dashboard.today ? { ...r, completed } : r);
+      optimistic.days = dashboard.days.map((day) => {
+        if (day.date !== date) return day;
+        const ids = new Set(day.completedRoutines.map((r) => r.id));
+        if (completed) ids.add(id); else ids.delete(id);
+        const completedRoutines = dashboard.heatmapRoutines.filter((r) => ids.has(r.id)).map(({ id, name, symbol }) => ({ id, name, symbol }));
+        return { ...day, count: completedRoutines.length, completedRoutines };
+      });
+    } else {
+      optimistic.streakRoutines = dashboard.streakRoutines.map((r) => {
+        if (r.id !== id) return r;
+        const dates = new Set(r.completionDates);
+        if (completed) dates.add(date); else dates.delete(date);
+        const completionDates = [...dates].sort();
+        return { ...r, completed: date === dashboard.today ? completed : r.completed, completionDates, streak: currentStreak(completionDates, dashboard.today) };
+      });
+    }
+    void mutate(`/api/routines/${id}/completion`, 'PUT', { date, completed, todayOnly }, optimistic);
   }
 
-  const completed = dashboard?.routines.filter((routine) => routine.completed).length ?? 0;
+  const editingDay = dashboard?.days.find((day) => day.date === editingDate);
   return <main>
     <header className="page-header">
       <div><p className="eyebrow">Small actions. Steady progress.</p><h1>Core Routine</h1></div>
@@ -79,18 +100,26 @@ export function App() {
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => void refresh()} disabled={busy || loading}>Retry loading</button></div>}
     {!dashboard && <p role="status" className="panel">{loading ? 'Loading your routines…' : 'Your dashboard is unavailable. Retry loading to reconnect.'}</p>}
     {dashboard && <>
-      <Heatmap key={dashboard.year} year={dashboard.year} today={dashboard.today} days={dashboard.days} />
-      <div className="today-layout">
-        <RoutineChecklist routines={dashboard.routines} busy={busy || loading} onToggle={toggle}
-          onCreate={(name) => mutate('/api/routines', 'POST', { name })} />
-        <section className="panel today-summary" aria-labelledby="summary-heading">
-          <h2 id="summary-heading">Today</h2>
-          <p className="today-count">{completed}<span> / {dashboard.routines.length}</span></p>
-          <p className="muted">{dashboard.routines.length === 0 ? 'Your first routine starts here.' : 'routines completed'}</p>
-          {dashboard.routines.length > 0 && <progress aria-label="Today's completion" value={completed} max={dashboard.routines.length} />}
-          <p className="save-status" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
-        </section>
+      <div className="dashboard-columns">
+        <div className="main-column">
+          <Heatmap key={dashboard.year} year={dashboard.year} today={dashboard.today} days={dashboard.days} onEdit={setEditingDate} />
+          <section className="panel checklist" aria-labelledby="today-heading">
+            <div className="section-heading"><h2 id="today-heading">Today’s heatmap routines</h2></div>
+            <RoutineChecklist routines={dashboard.heatmapRoutines} busy={busy || loading} onToggle={(id, completed) => toggle(id, dashboard.today, completed, true)} />
+          </section>
+        </div>
+        <aside className="streak-column" aria-labelledby="streaks-heading">
+          <h2 id="streaks-heading">Daily streaks</h2>
+          {!dashboard.streakRoutines.length && <p className="panel muted">Add a streak routine in Manage routines to start a daily habit.</p>}
+          {dashboard.streakRoutines.map((routine) => <StreakCard key={routine.id} routine={routine} today={dashboard.today} busy={busy || loading} onToggle={toggle} />)}
+          <p className="muted field-help">Yesterday’s streak stays until today ends. Check today to extend it.</p>
+        </aside>
       </div>
+      <p className="save-status" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
+      <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error} onMutate={mutate} />
+      {editingDay && <HeatmapEditor date={editingDay.date} error={error} busy={busy || loading} onClose={() => setEditingDate(null)}
+        routines={dashboard.heatmapRoutines.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
+        onToggle={(id, completed) => toggle(id, editingDay.date, completed)} />}
     </>}
   </main>;
 }

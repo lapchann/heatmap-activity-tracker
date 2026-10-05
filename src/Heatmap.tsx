@@ -3,19 +3,18 @@ import type { CSSProperties, KeyboardEvent } from 'react';
 import { calendarDate, completionLevel } from '../shared/dates';
 import type { DayActivity } from '../shared/types';
 
-interface Props { year: number; today: string; days: DayActivity[] }
+interface Props { year: number; today: string; days: DayActivity[]; onEdit: (date: string) => void }
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function describeDay(day: DayActivity, today: string): string {
   const date = calendarDate(day.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
   const activity = day.date > today ? 'Future date'
-    : day.active === 0 ? 'No active routines'
-    : `${day.completed} of ${day.active} routines completed`;
+    : `${day.count} ${day.count === 1 ? 'routine' : 'routines'} completed${day.count ? ` — ${day.completedRoutines.map((r) => `${r.symbol} ${r.name}`).join(', ')}` : ''}`;
   return `${date} — ${activity}`;
 }
 
-export function Heatmap({ year, today, days }: Props) {
+export function Heatmap({ year, today, days, onEdit }: Props) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
   const [focusedDate, setFocusedDate] = useState<string | null>(null);
   const [tabDate, setTabDate] = useState(today);
@@ -23,7 +22,6 @@ export function Heatmap({ year, today, days }: Props) {
   const weeks = Math.ceil((offset + days.length) / 7);
   const activeDate = hoveredDate ?? focusedDate ?? today;
   const selectedDay = days.find((day) => day.date === activeDate) ?? days[0];
-  const description = describeDay(selectedDay, today);
 
   function moveFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const delta: Record<string, number> = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 };
@@ -52,22 +50,27 @@ export function Heatmap({ year, today, days }: Props) {
         <div className="day-grid" role="group" aria-label={`${year} routine completion calendar. Use arrow keys to explore dates.`}>
           {Array.from({ length: offset }, (_, i) => <span key={`blank-${i}`} aria-hidden="true" />)}
           {days.map((day, index) => <button key={day.date} type="button"
-            className={`day-cell level-${completionLevel(day.completed, day.active)}${day.active === 0 ? ' inactive' : ''}${day.date > today ? ' future' : ''}${day.date === today ? ' is-today' : ''}`}
+            className={`day-cell level-${completionLevel(day.count)}${day.date > today ? ' future' : ''}${day.date === today ? ' is-today' : ''}`}
             data-date={day.date} aria-label={describeDay(day, today)} aria-current={day.date === today ? 'date' : undefined}
             tabIndex={day.date === tabDate ? 0 : -1} title={describeDay(day, today)}
             onMouseEnter={() => setHoveredDate(day.date)} onMouseLeave={() => setHoveredDate(null)}
-            onFocus={() => { setFocusedDate(day.date); setTabDate(day.date); }} onBlur={() => setFocusedDate(null)}
+            onFocus={() => { setHoveredDate(null); setFocusedDate(day.date); setTabDate(day.date); }} onBlur={() => setFocusedDate(null)}
             onKeyDown={(event) => moveFocus(event, index)}
+            aria-disabled={day.date > today} onClick={() => { if (day.date <= today) onEdit(day.date); }}
           />)}
         </div>
       </div>
     </div>
     <div className="heatmap-footer">
-      <p className="day-description" aria-live="polite">{description}</p>
-      <div className="legend" aria-label="Completion scale: empty, 1 to 33 percent, 34 to 66 percent, 67 to 99 percent, 100 percent">
-        <span>Less</span>{[0, 1, 2, 3, 4].map((level) => <i key={level} className={`legend-cell level-${level}`} />)}<span>More</span>
+      <div className="day-description" aria-live="polite">
+        <p>{calendarDate(selectedDay.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</p>
+        <p>{selectedDay.date > today ? 'Future date' : `${selectedDay.count} ${selectedDay.count === 1 ? 'routine' : 'routines'} completed`}</p>
+        <div className="day-symbols">{selectedDay.completedRoutines.map((routine) => <span key={routine.id} title={routine.name} aria-label={routine.name}>{routine.symbol}</span>)}</div>
+      </div>
+      <div className="legend" aria-label="Heatmap completions: 0, 1, 2, 3, 4 or more">
+        {[0, 1, 2, 3, 4].map((level) => <span key={level} className="legend-step"><i className={`legend-cell level-${level}`} />{level === 4 ? '4+' : level}</span>)}
       </div>
     </div>
-    <p className="heatmap-note muted">Outlined days have no active routines. Use the arrow keys to explore the calendar.</p>
+    <p className="heatmap-note muted">Heatmap routines only. Use arrow keys to explore; click or press Enter to edit a past date or today.</p>
   </section>;
 }
