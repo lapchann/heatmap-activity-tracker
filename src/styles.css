@@ -56,6 +56,7 @@ h2 { font-size: 18px; font-weight: 650; }
 .day-cell:hover, .day-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .heatmap-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 20px; min-height: 56px; }
 .day-description { font-size: 13px; min-height: 20px; }
+.heatmap-tooltip { position: fixed; z-index: 10; pointer-events: none; width: max-content; max-width: calc(100% - 16px); padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: #25352d; box-shadow: 0 3px 12px #15251d26; font-size: 13px; }
 .legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .legend span:first-child { margin-right: 3px; }
 .legend span:last-child { margin-left: 3px; }
