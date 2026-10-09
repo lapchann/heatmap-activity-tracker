@@ -33,7 +33,7 @@ describe('typed routine API and persistence', () => {
   function write(path: string, body: unknown, method = 'PUT') {
     return fetch(`${base}/api/${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
-  async function create(name: string, type: 'heatmap' | 'streak', symbol = '●') {
+  async function create(name: string, type: 'heatmap' | 'streak', symbol = '') {
     const response = await write('routines', { name, type, symbol }, 'POST');
     expect(response.status).toBe(201);
     const data = await response.json() as Dashboard;
@@ -164,6 +164,26 @@ describe('typed routine API and persistence', () => {
     expect(() => db.prepare("UPDATE routines SET type = 'both' WHERE id = ?").run(id)).toThrow();
     expect((await write(`routines/${id}/completion`, { date: '2024-02-29', completed: true })).status).toBe(200);
   });
+
+  it('defaults both types to blank symbols and clears symbols without changing history or stored colors', async () => {
+    for (const type of ['heatmap', 'streak']) {
+      expect((await write('routines', { name: type, type }, 'POST')).status).toBe(201);
+    }
+    const initial = await dashboard();
+    expect(initial.heatmapRoutines[0].symbol).toBe('');
+    expect(initial.streakRoutines[0].symbol).toBe('');
+    const id = initial.heatmapRoutines[0].id;
+    await complete(id);
+    await write(`routines/${id}`, { name: 'Custom', symbol: '📚', accentColor: '#8054ad' });
+    expect((await write(`routines/${id}`, { name: 'No symbol', symbol: '' })).status).toBe(200);
+    const final = await dashboard();
+    expect(final.heatmapRoutines[0]).toMatchObject({ id, name: 'No symbol', symbol: '', accentColor: '#8054ad', completed: true });
+    expect(final.days.find((day) => day.date === today)).toMatchObject({ count: 1, completedRoutines: [{ id, symbol: '' }] });
+    expect((await write(`routines/${id}`, { name: 'Invalid', symbol: 'two' })).status).toBe(400);
+    expect((await write(`routines/${id}`, { name: 'Invalid', symbol: null })).status).toBe(400);
+    db.close(); db = openDatabase(join(directory, 'routines.sqlite'));
+    expect(getDashboard(db, today)).toEqual(final);
+  });
 });
 
 for (const version of [0, 1]) {
@@ -195,14 +215,14 @@ for (const version of [0, 1]) {
       db.close(); db = openDatabase(filename);
       const data = getDashboard(db, '2026-10-04');
       expect(data.heatmapRoutines.map((r) => r.id)).toEqual(version === 0 ? [3, 8] : [8, 3]);
-      expect(data.heatmapRoutines.every((r) => r.type === 'heatmap' && r.symbol === '●')).toBe(true);
+      expect(data.heatmapRoutines.every((r) => r.type === 'heatmap' && r.symbol === '')).toBe(true);
       expect(data.heatmapRoutines[0].accentColor).toBe(version === 0 ? '#216743' : '#2864b4');
       expect(data.streakRoutines).toEqual([]);
       expect(data.days.find((d) => d.date === '2026-03-10')?.count).toBe(1);
       expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(completions);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'completions' }, { name: 'routines' }]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
-      expect(db.pragma('user_version', { simple: true })).toBe(2);
+      expect(db.pragma('user_version', { simple: true })).toBe(3);
       db.close(); db = openDatabase(filename);
       expect(getDashboard(db, '2026-10-04')).toEqual(data);
     } finally {
@@ -211,6 +231,48 @@ for (const version of [0, 1]) {
     }
   });
 }
+
+it('migrates v2 placeholder symbols and SQLite defaults while preserving custom symbols and completions', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'symbol-migration-'));
+  const filename = join(directory, 'old.sqlite');
+  let db = new Database(filename);
+  try {
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE routines (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'heatmap' CHECK (type IN ('heatmap', 'streak')),
+        position INTEGER NOT NULL DEFAULT 0, accent_color TEXT NOT NULL DEFAULT '#216743', symbol TEXT NOT NULL DEFAULT '●'
+      );
+      CREATE TABLE completions (routine_id INTEGER NOT NULL REFERENCES routines(id) ON DELETE CASCADE, date TEXT NOT NULL, PRIMARY KEY (routine_id, date));
+      INSERT INTO routines (id, name, type, position, accent_color, symbol) VALUES
+        (3, 'Old default', 'heatmap', 4, '#8054ad', '●'),
+        (5, 'Old streak', 'streak', 2, '#2864b4', '●'),
+        (8, 'Reading', 'heatmap', 1, '#2864b4', '📚'),
+        (9, 'Custom bullet', 'streak', 3, '#216743', '•');
+      INSERT INTO completions VALUES (3, '2026-10-04'), (5, '2026-10-04'), (8, '2026-10-04'), (9, '2026-10-03');
+      PRAGMA user_version = 2;
+    `);
+    const before = db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all();
+    db.close(); db = openDatabase(filename);
+    const data = getDashboard(db, '2026-10-04');
+    expect(data.heatmapRoutines).toMatchObject([
+      { id: 8, symbol: '📚', position: 1, accentColor: '#2864b4' },
+      { id: 3, symbol: '', position: 4, accentColor: '#8054ad' },
+    ]);
+    expect(data.streakRoutines).toMatchObject([{ id: 5, symbol: '', streak: 1 }, { id: 9, symbol: '•', streak: 1 }]);
+    expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(before);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    db.prepare("INSERT INTO routines (id, name) VALUES (10, 'SQL default')").run();
+    expect(db.prepare('SELECT symbol FROM routines WHERE id = 10').get()).toEqual({ symbol: '' });
+    db.close(); db = openDatabase(filename);
+    expect(getDashboard(db, '2026-10-04').heatmapRoutines.find((r) => r.id === 8)?.symbol).toBe('📚');
+  } finally {
+    if (db.open) db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe('local calendar and streak boundaries', () => {
   it('retains yesterday’s 12-day streak until today ends, extends today, and breaks after a missed day', () => {

@@ -1,6 +1,6 @@
 # Core Routine
 
-A local dashboard for two independent routine types: heatmap routines for meaningful effort, and streak routines for daily consistency. Create, rename, reorder, recolor, and choose a symbol in Manage routines.
+A local dashboard for two independent routine types: heatmap routines for meaningful effort, and streak routines for daily consistency. Use + to open Manage routines: create, rename, reorder, and optionally choose a symbol. Close the dialog with Close or Escape.
 
 Requires Node.js 22.12+ and npm.
 
@@ -28,7 +28,7 @@ The yearly heatmap counts only completed heatmap routines, with fixed levels for
 
 Each streak routine has its own card and completion control. Streaks are derived from that routine's consecutive completed local dates: count back from today if done, otherwise yesterday. An incomplete today keeps yesterday's streak until the day ends. Use Correct history on a card to toggle a past date. Future edits are rejected. Heatmap completions never affect streaks, and streak completions never affect the heatmap.
 
-The runtime schema has only `routines` (ID, name, type, position, accent color, symbol) and `completions` (routine ID, date). Original Milestone 1 databases and the temporary lifecycle development schema upgrade transactionally to `user_version = 2`. Migration preserves all routine IDs and completion rows, plus existing order/colors, defaults old routines to heatmap with a ● symbol, and drops the obsolete active-period table. Previously archived/scheduled routines become ordinary heatmap routines; their preserved completions now count without period restrictions. No database recreation is needed.
+The runtime schema has only `routines` (ID, name, type, position, accent color, symbol) and `completions` (routine ID, date). Earlier databases upgrade automatically through transactional migrations to `user_version = 3`. IDs, completions, order, and stored colors are preserved. The old default ● placeholder is cleared, other symbols are retained, and new routines default to no symbol. Stored accent colors remain in SQLite but are no longer edited or displayed. Original Milestone 1 and lifecycle-era routines become ordinary heatmap routines, and the obsolete active-period table is removed. No database recreation is needed.
 
 ```sh
 npm run typecheck

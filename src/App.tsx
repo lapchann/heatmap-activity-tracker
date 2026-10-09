@@ -15,6 +15,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const inFlight = useRef(false);
   const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [managingRoutines, setManagingRoutines] = useState(false);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
@@ -94,8 +95,9 @@ export function App() {
   const editingDay = dashboard?.days.find((day) => day.date === editingDate);
   return <main>
     <header className="page-header">
-      <div><p className="eyebrow">Small actions. Steady progress.</p><h1>Core Routine</h1></div>
+      <h1 className="sr-only">Routine dashboard</h1>
       {dashboard && <time dateTime={dashboard.today}>{calendarDate(dashboard.today).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</time>}
+      <button type="button" className="manage-button" aria-label="Manage routines" title="Manage routines" aria-haspopup="dialog" disabled={!dashboard} onClick={() => setManagingRoutines(true)}>+</button>
     </header>
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => void refresh()} disabled={busy || loading}>Retry loading</button></div>}
     {!dashboard && <p role="status" className="panel">{loading ? 'Loading your routines…' : 'Your dashboard is unavailable. Retry loading to reconnect.'}</p>}
@@ -103,8 +105,8 @@ export function App() {
       <div className="dashboard-columns">
         <div className="main-column">
           <Heatmap key={dashboard.year} year={dashboard.year} today={dashboard.today} days={dashboard.days} onEdit={setEditingDate} />
-          <section className="panel checklist" aria-labelledby="today-heading">
-            <div className="section-heading"><h2 id="today-heading">Today’s heatmap routines</h2></div>
+          <section className="checklist" aria-labelledby="today-heading">
+            <div className="section-heading"><h2 id="today-heading">Today</h2></div>
             <RoutineChecklist routines={dashboard.heatmapRoutines} busy={busy || loading} onToggle={(id, completed) => toggle(id, dashboard.today, completed, true)} />
           </section>
         </div>
@@ -112,11 +114,10 @@ export function App() {
           <h2 id="streaks-heading">Daily streaks</h2>
           {!dashboard.streakRoutines.length && <p className="panel muted">Add a streak routine in Manage routines to start a daily habit.</p>}
           {dashboard.streakRoutines.map((routine) => <StreakCard key={routine.id} routine={routine} today={dashboard.today} busy={busy || loading} onToggle={toggle} />)}
-          <p className="muted field-help">Yesterday’s streak stays until today ends. Check today to extend it.</p>
         </aside>
       </div>
-      <p className="save-status" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
-      <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error} onMutate={mutate} />
+      <p className="sr-only" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
+      {managingRoutines && <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error} onMutate={mutate} onClose={() => setManagingRoutines(false)} />}
       {editingDay && <HeatmapEditor date={editingDay.date} error={error} busy={busy || loading} onClose={() => setEditingDate(null)}
         routines={dashboard.heatmapRoutines.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
         onToggle={(id, completed) => toggle(id, editingDay.date, completed)} />}

@@ -10,7 +10,7 @@ const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 function describeDay(day: DayActivity, today: string): string {
   const date = calendarDate(day.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
   const activity = day.date > today ? 'Future date'
-    : `${day.count} ${day.count === 1 ? 'routine' : 'routines'} completed${day.count ? ` — ${day.completedRoutines.map((r) => `${r.symbol} ${r.name}`).join(', ')}` : ''}`;
+    : `${day.count} completed`;
   return `${date} — ${activity}`;
 }
 
@@ -22,6 +22,7 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
   const weeks = Math.ceil((offset + days.length) / 7);
   const activeDate = hoveredDate ?? focusedDate ?? today;
   const selectedDay = days.find((day) => day.date === activeDate) ?? days[0];
+  const symbols = selectedDay.completedRoutines.filter((routine) => routine.symbol);
 
   function moveFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const delta: Record<string, number> = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 };
@@ -33,11 +34,8 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
     next?.focus();
   }
 
-  return <section className="panel heatmap" aria-labelledby="heatmap-heading">
-    <div className="section-heading">
-      <div><h2 id="heatmap-heading">Your year, one day at a time</h2><p className="muted">A little progress adds up.</p></div>
-      <span className="year-label">{year}</span>
-    </div>
+  return <section className="panel heatmap" aria-label={`${year} heatmap`}>
+    <h2 className="year-label">{year}</h2>
     <div className="heatmap-scroll">
       <div className="calendar" style={{ '--weeks': weeks } as CSSProperties}>
         <div className="months" aria-hidden="true">
@@ -52,7 +50,7 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
           {days.map((day, index) => <button key={day.date} type="button"
             className={`day-cell level-${completionLevel(day.count)}${day.date > today ? ' future' : ''}${day.date === today ? ' is-today' : ''}`}
             data-date={day.date} aria-label={describeDay(day, today)} aria-current={day.date === today ? 'date' : undefined}
-            tabIndex={day.date === tabDate ? 0 : -1} title={describeDay(day, today)}
+            tabIndex={day.date === tabDate ? 0 : -1} aria-describedby={day.date === activeDate ? 'heatmap-details' : undefined}
             onMouseEnter={() => setHoveredDate(day.date)} onMouseLeave={() => setHoveredDate(null)}
             onFocus={() => { setHoveredDate(null); setFocusedDate(day.date); setTabDate(day.date); }} onBlur={() => setFocusedDate(null)}
             onKeyDown={(event) => moveFocus(event, index)}
@@ -62,15 +60,13 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
       </div>
     </div>
     <div className="heatmap-footer">
-      <div className="day-description" aria-live="polite">
-        <p>{calendarDate(selectedDay.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</p>
-        <p>{selectedDay.date > today ? 'Future date' : `${selectedDay.count} ${selectedDay.count === 1 ? 'routine' : 'routines'} completed`}</p>
-        <div className="day-symbols">{selectedDay.completedRoutines.map((routine) => <span key={routine.id} title={routine.name} aria-label={routine.name}>{routine.symbol}</span>)}</div>
+      <div id="heatmap-details" className="day-description" aria-live="polite">
+        <p>{describeDay(selectedDay, today)}</p>
+        {symbols.length > 0 && <div className="day-symbols">{symbols.map((routine) => <span key={routine.id}>{routine.symbol}</span>)}</div>}
       </div>
       <div className="legend" aria-label="Heatmap completions: 0, 1, 2, 3, 4 or more">
         {[0, 1, 2, 3, 4].map((level) => <span key={level} className="legend-step"><i className={`legend-cell level-${level}`} />{level === 4 ? '4+' : level}</span>)}
       </div>
     </div>
-    <p className="heatmap-note muted">Heatmap routines only. Use arrow keys to explore; click or press Enter to edit a past date or today.</p>
   </section>;
 }

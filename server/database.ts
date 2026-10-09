@@ -11,7 +11,7 @@ export function openDatabase(filename: string): Database.Database {
     db.pragma('foreign_keys = ON');
     db.pragma('journal_mode = WAL');
     const version = db.pragma('user_version', { simple: true }) as number;
-    if (version > 2) throw new Error('Database schema is newer than this application supports.');
+    if (version > 3) throw new Error('Database schema is newer than this application supports.');
     if (version < 2) db.transaction(() => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS routines (
@@ -38,6 +38,16 @@ export function openDatabase(filename: string): Database.Database {
       if (!columns.includes('symbol')) db.exec("ALTER TABLE routines ADD COLUMN symbol TEXT NOT NULL DEFAULT '●'");
       // Periods are obsolete. Dropping this child table leaves every completion intact.
       db.exec('DROP TABLE IF EXISTS routine_periods; PRAGMA user_version = 2;');
+    })();
+    if (version < 3) db.transaction(() => {
+      // Replace only this column to change its SQLite default as well as the old placeholder.
+      db.exec(`
+        ALTER TABLE routines ADD COLUMN symbol_v3 TEXT NOT NULL DEFAULT '';
+        UPDATE routines SET symbol_v3 = CASE WHEN symbol = '●' THEN '' ELSE symbol END;
+        ALTER TABLE routines DROP COLUMN symbol;
+        ALTER TABLE routines RENAME COLUMN symbol_v3 TO symbol;
+        PRAGMA user_version = 3;
+      `);
     })();
     return db;
   } catch (error) {
@@ -96,8 +106,8 @@ export function createRoutine(db: Database.Database, name: string, type: Routine
     .run(name, type, accentColor, symbol, type);
 }
 
-export function updateRoutine(db: Database.Database, id: number, name: string, accentColor: string, symbol: string): void {
-  if (!db.prepare('UPDATE routines SET name = ?, accent_color = ?, symbol = ? WHERE id = ?').run(name, accentColor, symbol, id).changes) {
+export function updateRoutine(db: Database.Database, id: number, name: string, accentColor: string | undefined, symbol: string): void {
+  if (!db.prepare('UPDATE routines SET name = ?, accent_color = COALESCE(?, accent_color), symbol = ? WHERE id = ?').run(name, accentColor ?? null, symbol, id).changes) {
     throw new RoutineError('Routine not found.', 404);
   }
 }

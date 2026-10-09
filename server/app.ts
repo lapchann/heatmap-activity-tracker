@@ -9,12 +9,12 @@ import { createRoutine, getDashboard, reorderRoutines, RoutineError, setCompleti
 function validType(value: unknown): value is RoutineType { return value === 'heatmap' || value === 'streak'; }
 
 function metadata(body: Record<string, unknown>) {
-  const { name, accentColor = defaultRoutineColor, symbol = '●' } = body;
+  const { name, accentColor, symbol = '' } = body;
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 80) throw new RoutineError('Enter a routine name between 1 and 80 characters.', 400);
-  if (typeof accentColor !== 'string' || !routineColors.some((color) => color.value === accentColor)) throw new RoutineError('Choose an available accent color.', 400);
-  if (typeof symbol !== 'string' || symbol.length > 16 || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(symbol)
-    || /[\s\p{Cc}]/u.test(symbol) || [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(symbol)].length !== 1) {
-    throw new RoutineError('Choose one visible symbol or emoji (up to 16 characters).', 400);
+  if (accentColor !== undefined && (typeof accentColor !== 'string' || !routineColors.some((color) => color.value === accentColor))) throw new RoutineError('Choose an available accent color.', 400);
+  if (typeof symbol !== 'string' || symbol.length > 16 || (symbol !== '' && (!/[\p{L}\p{N}\p{P}\p{S}]/u.test(symbol)
+    || /[\s\p{Cc}]/u.test(symbol) || [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(symbol)].length !== 1))) {
+    throw new RoutineError('Leave the symbol blank or choose one symbol or emoji (up to 16 characters).', 400);
   }
   return { name: name.trim(), accentColor, symbol };
 }
@@ -40,7 +40,7 @@ export function createApp(db: Database.Database, today = () => localDate()) {
     fields(req.body, ['name', 'type', 'accentColor', 'symbol']);
     if (!validType(req.body.type)) throw new RoutineError('Choose heatmap or streak as the routine type.', 400);
     const { name, accentColor, symbol } = metadata(req.body);
-    createRoutine(db, name, req.body.type, accentColor, symbol);
+    createRoutine(db, name, req.body.type, accentColor ?? defaultRoutineColor, symbol);
     res.status(201).json(getDashboard(db, today()));
   });
   app.put('/api/routines/order', (req, res) => {
