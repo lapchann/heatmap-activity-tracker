@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { calendarDate, currentStreak } from '../shared/dates';
-import type { Dashboard } from '../shared/types';
+import type { Appearance, Dashboard } from '../shared/types';
 import { requestDashboard } from './api';
 import { Heatmap } from './Heatmap';
 import { RoutineChecklist } from './RoutineChecklist';
@@ -14,15 +14,19 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const inFlight = useRef(false);
+  // Undefined follows the current year as the local calendar advances.
+  const selectedYear = useRef<number | undefined>(undefined);
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [managingRoutines, setManagingRoutines] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (year = selectedYear.current) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setLoading(true);
     try {
-      setDashboard(await requestDashboard());
+      const next = await requestDashboard('/api/dashboard', undefined, year);
+      selectedYear.current = next.year === Number(next.today.slice(0, 4)) ? undefined : next.year;
+      setDashboard(next);
       setError(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Could not load your routines.');
@@ -31,6 +35,12 @@ export function App() {
       setLoading(false);
     }
   }, []);
+
+  useLayoutEffect(() => {
+    if (!dashboard) return;
+    document.documentElement.dataset.appearance = dashboard.appearance.mode;
+    document.documentElement.style.setProperty('--theme-color', dashboard.appearance.color);
+  }, [dashboard?.appearance.color, dashboard?.appearance.mode]);
 
   useEffect(() => {
     void refresh();
@@ -53,18 +63,22 @@ export function App() {
     setError(null);
     if (optimistic) setDashboard(optimistic);
     try {
-      setDashboard(await requestDashboard(path, { method, body: JSON.stringify(body) }));
+      setDashboard(await requestDashboard(path, { method, body: JSON.stringify(body) }, selectedYear.current));
       return true;
     } catch (error) {
       setDashboard(previous);
       // A response can be lost after a successful write. Re-read before reporting failure.
-      try { setDashboard(await requestDashboard()); } catch { /* Keep the last confirmed snapshot. */ }
+      try { setDashboard(await requestDashboard('/api/dashboard', undefined, selectedYear.current)); } catch { /* Keep the last confirmed snapshot. */ }
       setError(error instanceof Error ? error.message : 'Could not save this change. Please try again.');
       return false;
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
+  }
+
+  function changeAppearance(appearance: Appearance) {
+    if (dashboard) void mutate('/api/settings', 'PUT', appearance, { ...dashboard, appearance });
   }
 
   function toggle(id: number, date: string, completed: boolean, todayOnly = false) {
@@ -104,7 +118,9 @@ export function App() {
     {dashboard && <>
       <div className="dashboard-columns">
         <div className="main-column">
-          <Heatmap key={dashboard.year} year={dashboard.year} today={dashboard.today} days={dashboard.days} onEdit={setEditingDate} />
+          <Heatmap year={dashboard.year} firstYear={dashboard.firstYear} today={dashboard.today} days={dashboard.days}
+            busy={busy || loading} onYearChange={(year) => void refresh(year)}
+            onEdit={(date) => { if (!busy && !loading) setEditingDate(date); }} />
           <section className="checklist" aria-labelledby="today-heading">
             <div className="section-heading"><h2 id="today-heading">Today</h2></div>
             <RoutineChecklist routines={dashboard.heatmapRoutines} busy={busy || loading} onToggle={(id, completed) => toggle(id, dashboard.today, completed, true)} />
@@ -117,7 +133,8 @@ export function App() {
         </aside>
       </div>
       <p className="sr-only" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
-      {managingRoutines && <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error} onMutate={mutate} onClose={() => setManagingRoutines(false)} />}
+      {managingRoutines && <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error}
+        appearance={dashboard.appearance} onAppearanceChange={changeAppearance} onMutate={mutate} onClose={() => setManagingRoutines(false)} />}
       {editingDay && <HeatmapEditor date={editingDay.date} error={error} busy={busy || loading} onClose={() => setEditingDate(null)}
         routines={dashboard.heatmapRoutines.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
         onToggle={(id, completed) => toggle(id, editingDay.date, completed)} />}

@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
-import type { Routine, RoutineType } from '../shared/types';
+import type { CSSProperties, KeyboardEvent } from 'react';
+import type { Appearance, Routine, RoutineType } from '../shared/types';
+import { themeColors } from '../shared/colors';
 
 interface Props {
   routines: Routine[];
   busy: boolean;
   error: string | null;
+  appearance: Appearance;
+  onAppearanceChange: (appearance: Appearance) => void;
   onMutate: (path: string, method: string, body: object) => Promise<boolean>;
   onClose: () => void;
 }
 
-export function RoutineManagement({ routines, busy, error, onMutate, onClose }: Props) {
+export function RoutineManagement({ routines, busy, error, appearance, onAppearanceChange, onMutate, onClose }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState('');
   const [type, setType] = useState<RoutineType>('heatmap');
@@ -59,6 +62,24 @@ export function RoutineManagement({ routines, busy, error, onMutate, onClose }: 
     </div>
     <p className="muted management-intro">Heatmap routines record meaningful effort. Streak routines build daily consistency.</p>
     {error && <p className="management-error" role="alert">{error}</p>}
+    <section className="appearance-settings" aria-labelledby="appearance-heading">
+      <h3 id="appearance-heading">Appearance</h3>
+      <div className="appearance-controls">
+        <label>Mode<select value={appearance.mode} aria-disabled={busy}
+          onChange={(event) => { if (!busy) onAppearanceChange({ ...appearance, mode: event.target.value as Appearance['mode'] }); }}>
+          <option value="light">Light</option><option value="dark">Dark</option>
+        </select></label>
+        <fieldset className="theme-colors" aria-disabled={busy}>
+          <legend>Color</legend>
+          {themeColors.map((color) => <label key={color.value} title={color.name}>
+            <input type="radio" name="theme-color" value={color.value} checked={appearance.color === color.value} aria-disabled={busy}
+              onChange={() => { if (!busy) onAppearanceChange({ ...appearance, color: color.value }); }} />
+            <span className="theme-swatch" style={{ '--swatch': color.value } as CSSProperties} aria-hidden="true" />
+            <span className="sr-only">{color.name}</span>
+          </label>)}
+        </fieldset>
+      </div>
+    </section>
     <form className="create-routine" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <h3>Add a routine</h3>
       <fieldset disabled={busy} className="metadata-fields">

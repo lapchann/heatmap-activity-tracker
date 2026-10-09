@@ -4,15 +4,14 @@ import { createPortal } from 'react-dom';
 import { calendarDate, completionLevel } from '../shared/dates';
 import type { DayActivity } from '../shared/types';
 
-interface Props { year: number; today: string; days: DayActivity[]; onEdit: (date: string) => void }
+interface CalendarProps { year: number; today: string; days: DayActivity[]; onEdit: (date: string) => void }
+interface Props extends CalendarProps { firstYear: number; busy: boolean; onYearChange: (year: number) => void }
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function describeDay(day: DayActivity, today?: string): string {
+function describeDay(day: DayActivity): string {
   const date = calendarDate(day.date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
-  const activity = today && day.date > today ? 'Future date'
-    : `${day.count} completed`;
-  return `${date} — ${activity}`;
+  return `${date} — ${day.count} completed`;
 }
 
 function DayTooltip({ anchor, id, children, onDismiss }: { anchor: HTMLButtonElement; id: string; children: ReactNode; onDismiss: () => void }) {
@@ -52,12 +51,27 @@ function DayTooltip({ anchor, id, children, onDismiss }: { anchor: HTMLButtonEle
   return createPortal(<div ref={ref} id={id} role="tooltip" className="heatmap-tooltip">{children}</div>, document.body);
 }
 
-export function Heatmap({ year, today, days, onEdit }: Props) {
+export function Heatmap({ firstYear, busy, onYearChange, ...calendar }: Props) {
+  const currentYear = Number(calendar.today.slice(0, 4));
+  const years = Array.from({ length: currentYear - firstYear + 1 }, (_, index) => currentYear - index);
+  return <section className="panel heatmap" aria-label={`${calendar.year} heatmap`} aria-busy={busy}>
+    <div className="heatmap-layout">
+      <Calendar key={calendar.year} {...calendar} />
+      <nav className="year-selector" aria-label="Heatmap year">
+        {years.map((year) => <button key={year} type="button" aria-pressed={year === calendar.year}
+          aria-controls="heatmap-calendar" aria-disabled={busy}
+          onClick={() => { if (!busy && year !== calendar.year) onYearChange(year); }}>{year}</button>)}
+      </nav>
+    </div>
+  </section>;
+}
+
+function Calendar({ year, today, days, onEdit }: CalendarProps) {
   const [hoveredCell, setHoveredCell] = useState<HTMLButtonElement | null>(null);
   const [focusedCell, setFocusedCell] = useState<HTMLButtonElement | null>(null);
   const [tooltipDismissed, setTooltipDismissed] = useState(false);
   const tooltipId = useId();
-  const [tabDate, setTabDate] = useState(today);
+  const [tabDate, setTabDate] = useState(() => days.some((day) => day.date === today) ? today : days[0].date);
   const offset = calendarDate(`${year}-01-01`).getDay();
   const weeks = Math.ceil((offset + days.length) / 7);
   const activeCell = hoveredCell ?? focusedCell;
@@ -77,7 +91,7 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
     next?.focus();
   }
 
-  return <section className="panel heatmap" aria-label={`${year} heatmap`}>
+  return <div id="heatmap-calendar" className="heatmap-content">
     <h2 className="year-label">{year}</h2>
     <div className="heatmap-scroll">
       <div className="calendar" style={{ '--weeks': weeks } as CSSProperties}>
@@ -92,7 +106,7 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
           {Array.from({ length: offset }, (_, i) => <span key={`blank-${i}`} aria-hidden="true" />)}
           {days.map((day, index) => <button key={day.date} type="button"
             className={`day-cell level-${completionLevel(day.count)}${day.date > today ? ' future' : ''}${day.date === today ? ' is-today' : ''}`}
-            data-date={day.date} aria-label={describeDay(day, today)} aria-current={day.date === today ? 'date' : undefined}
+            data-date={day.date} aria-label={describeDay(day)} aria-current={day.date === today ? 'date' : undefined}
             tabIndex={day.date === tabDate ? 0 : -1} aria-describedby={day.date === activeDate ? (showTooltip ? tooltipId : 'heatmap-details') : undefined}
             onMouseEnter={(event) => { setHoveredCell(event.currentTarget); setTooltipDismissed(false); }} onMouseLeave={() => setHoveredCell(null)}
             onFocus={(event) => { setHoveredCell(null); setFocusedCell(event.currentTarget); setTabDate(day.date); setTooltipDismissed(false); }} onBlur={() => setFocusedCell(null)}
@@ -104,7 +118,7 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
     </div>
     <div className="heatmap-footer">
       <div id="heatmap-details" className="day-description" aria-live="polite">
-        <p>{describeDay(selectedDay, today)}</p>
+        <p>{describeDay(selectedDay)}</p>
         {symbolLine}
       </div>
       <div className="legend" aria-label="Heatmap completions: 0, 1, 2, 3, 4 or more">
@@ -115,5 +129,5 @@ export function Heatmap({ year, today, days, onEdit }: Props) {
       <p>{describeDay(selectedDay)}</p>
       {symbolLine}
     </DayTooltip>}
-  </section>;
+  </div>;
 }

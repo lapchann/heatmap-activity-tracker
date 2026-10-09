@@ -1,17 +1,17 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { currentStreak, datesInYear } from '../shared/dates.js';
-import type { Dashboard, DayActivity, HeatmapRoutine, Routine, RoutineType } from '../shared/types.js';
+import { currentStreak, datesInYear, localDate } from '../shared/dates.js';
+import type { Appearance, Dashboard, DayActivity, HeatmapRoutine, Routine, RoutineType } from '../shared/types.js';
 
-export function openDatabase(filename: string): Database.Database {
+export function openDatabase(filename: string, firstUseDate = localDate()): Database.Database {
   if (filename !== ':memory:') mkdirSync(dirname(resolve(filename)), { recursive: true });
   const db = new Database(filename);
   try {
     db.pragma('foreign_keys = ON');
     db.pragma('journal_mode = WAL');
     const version = db.pragma('user_version', { simple: true }) as number;
-    if (version > 3) throw new Error('Database schema is newer than this application supports.');
+    if (version > 4) throw new Error('Database schema is newer than this application supports.');
     if (version < 2) db.transaction(() => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS routines (
@@ -49,6 +49,20 @@ export function openDatabase(filename: string): Database.Database {
         PRAGMA user_version = 3;
       `);
     })();
+    if (version < 4) db.transaction(() => {
+      db.exec(`
+        CREATE TABLE app_settings (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          first_use_date TEXT NOT NULL,
+          theme_color TEXT NOT NULL DEFAULT '#216743',
+          appearance_mode TEXT NOT NULL DEFAULT 'light' CHECK (appearance_mode IN ('light', 'dark'))
+        );
+      `);
+      // Earlier schemas have no trustworthy creation metadata. Record this upgrade,
+      // not the oldest completion: activity dates may have been backfilled.
+      db.prepare('INSERT INTO app_settings (id, first_use_date) VALUES (1, ?)').run(firstUseDate);
+      db.pragma('user_version = 4');
+    })();
     return db;
   } catch (error) {
     db.close();
@@ -56,8 +70,28 @@ export function openDatabase(filename: string): Database.Database {
   }
 }
 
-export function getDashboard(db: Database.Database, today: string): Dashboard {
-  const year = Number(today.slice(0, 4));
+function getSettings(db: Database.Database): Appearance & { firstUseDate: string } {
+  return db.prepare('SELECT first_use_date AS firstUseDate, theme_color AS color, appearance_mode AS mode FROM app_settings WHERE id = 1')
+    .get() as Appearance & { firstUseDate: string };
+}
+
+export function resolveHeatmapYear(db: Database.Database, today: string, requestedYear?: number) {
+  const currentYear = Number(today.slice(0, 4));
+  const firstYear = Math.min(currentYear, Number(getSettings(db).firstUseDate.slice(0, 4)));
+  const year = requestedYear ?? currentYear;
+  if (!Number.isInteger(year) || year < firstYear || year > currentYear) {
+    throw new RoutineError(`Choose a year between ${firstYear} and ${currentYear}.`, 400);
+  }
+  return { year, firstYear };
+}
+
+export function updateAppearance(db: Database.Database, appearance: Appearance): void {
+  db.prepare('UPDATE app_settings SET theme_color = ?, appearance_mode = ? WHERE id = 1').run(appearance.color, appearance.mode);
+}
+
+export function getDashboard(db: Database.Database, today: string, requestedYear?: number): Dashboard {
+  const { year, firstYear } = resolveHeatmapYear(db, today, requestedYear);
+  const { color, mode } = getSettings(db);
   const routines = db.prepare(`
     SELECT r.id, r.name, r.type, r.position, r.accent_color AS accentColor, r.symbol,
       EXISTS (SELECT 1 FROM completions c WHERE c.routine_id = r.id AND c.date = ?) AS completed
@@ -71,7 +105,7 @@ export function getDashboard(db: Database.Database, today: string): Dashboard {
     JOIN routines r ON r.id = c.routine_id
     WHERE r.type = 'heatmap' AND c.date BETWEEN ? AND ?
     ORDER BY r.position, r.id
-  `).all(`${year}-01-01`, today) as (DayActivity['completedRoutines'][number] & { date: string })[];
+  `).all(`${year}-01-01`, year < Number(today.slice(0, 4)) ? `${year}-12-31` : today) as (DayActivity['completedRoutines'][number] & { date: string })[];
   const byDate = new Map<string, DayActivity['completedRoutines']>();
   for (const { date, ...routine } of heatmapRows) {
     const list = byDate.get(date) ?? [];
@@ -83,7 +117,7 @@ export function getDashboard(db: Database.Database, today: string): Dashboard {
     WHERE r.type = 'streak' AND c.date <= ? ORDER BY c.date
   `).all(today) as { routine_id: number; date: string }[];
   return {
-    today, year,
+    today, year, firstYear, appearance: { color, mode },
     heatmapRoutines: normalized.filter((r): r is HeatmapRoutine => r.type === 'heatmap'),
     streakRoutines: normalized.filter((r) => r.type === 'streak').map((r) => {
       const completionDates = streakDates.filter((c) => c.routine_id === r.id).map((c) => c.date);

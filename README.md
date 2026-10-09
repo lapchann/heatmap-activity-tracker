@@ -26,9 +26,15 @@ The host PC's local calendar date determines “today.” A completion row means
 
 The yearly heatmap counts only completed heatmap routines, with fixed levels for 0, 1, 2, 3, and 4+ completions. Hover/focus shows the count and completed routines' symbols. Click a past date or today (or press Enter while focused) to edit it immediately. Adding routines does not change earlier counts or levels.
 
+Select a year inside the heatmap panel to browse or edit that calendar year. Today's checklist and streak cards always use the actual local date. Years run from the persisted first-use year through the current local year. Older schemas contain no installation or routine-creation timestamps, so existing databases use the local date of their first v4 upgrade as the boundary. Backfilled completions do not move that boundary; older activity stays stored even when its year is not selectable.
+
+Use Appearance in Manage routines to choose one of six global colors and Light or Dark mode. These independent preferences save immediately in SQLite and survive browser refreshes and server restarts.
+
 Each streak routine has its own card and completion control. Streaks are derived from that routine's consecutive completed local dates: count back from today if done, otherwise yesterday. An incomplete today keeps yesterday's streak until the day ends. Use Correct history on a card to toggle a past date. Future edits are rejected. Heatmap completions never affect streaks, and streak completions never affect the heatmap.
 
-The runtime schema has only `routines` (ID, name, type, position, accent color, symbol) and `completions` (routine ID, date). Earlier databases upgrade automatically through transactional migrations to `user_version = 3`. IDs, completions, order, and stored colors are preserved. The old default ● placeholder is cleared, other symbols are retained, and new routines default to no symbol. Stored accent colors remain in SQLite but are no longer edited or displayed. Original Milestone 1 and lifecycle-era routines become ordinary heatmap routines, and the obsolete active-period table is removed. No database recreation is needed.
+The runtime schema contains `routines` (ID, name, type, position, accent color, symbol), `completions` (routine ID, date), and one `app_settings` row (first-use date, global color, appearance mode). Earlier databases upgrade automatically through transactional migrations to `user_version = 4`. IDs, completions, order, and stored routine colors are preserved. The old default ● placeholder is cleared, other symbols are retained, and new routines default to no symbol. Stored routine colors are no longer edited or displayed. Original Milestone 1 and lifecycle-era routines become ordinary heatmap routines, and the obsolete active-period table is removed. No database recreation is needed.
+
+`GET /api/dashboard?year=2024` loads an eligible heatmap year. Mutation endpoints accept the same optional query parameter to return that year's updated dashboard; it never changes the date being edited. `PUT /api/settings` accepts `{ "color": "#2864b4", "mode": "dark" }`. Dashboard responses include the selected `year`, `firstYear`, and `appearance`.
 
 ```sh
 npm run typecheck

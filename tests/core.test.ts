@@ -8,6 +8,7 @@ import { createApp } from '../server/app.js';
 import { getDashboard, openDatabase } from '../server/database.js';
 import { calendarDate, completionLevel, currentStreak, datesInYear, isCalendarDate, localDate, previousDate } from '../shared/dates.js';
 import type { Dashboard } from '../shared/types.js';
+import { themeColors } from '../shared/colors.js';
 
 describe('typed routine API and persistence', () => {
   let directory: string;
@@ -17,8 +18,8 @@ describe('typed routine API and persistence', () => {
   let today: string;
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), 'routine-test-'));
-    db = openDatabase(join(directory, 'routines.sqlite'));
     today = '2026-10-04';
+    db = openDatabase(join(directory, 'routines.sqlite'), today);
     server = createApp(db, () => today).listen(0, '127.0.0.1');
     await new Promise<void>((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
     const address = server.address();
@@ -39,8 +40,8 @@ describe('typed routine API and persistence', () => {
     const data = await response.json() as Dashboard;
     return [...data.heatmapRoutines, ...data.streakRoutines].find((r) => r.name === name)!.id;
   }
-  async function dashboard(): Promise<Dashboard> {
-    const response = await fetch(`${base}/api/dashboard`);
+  async function dashboard(year?: number): Promise<Dashboard> {
+    const response = await fetch(`${base}/api/dashboard${year === undefined ? '' : `?year=${year}`}`);
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     return response.json() as Promise<Dashboard>;
@@ -184,10 +185,129 @@ describe('typed routine API and persistence', () => {
     db.close(); db = openDatabase(join(directory, 'routines.sqlite'));
     expect(getDashboard(db, today)).toEqual(final);
   });
+
+  it('loads eligible calendar years and leap days without changing today or streak calculations', async () => {
+    db.prepare('UPDATE app_settings SET first_use_date = ?').run('2024-06-15');
+    const heatmap = await create('Reading', 'heatmap', '📚');
+    const streak = await create('Stretch', 'streak', '🧘');
+    for (const date of ['2024-02-29', '2024-12-31', '2025-01-01', today]) await complete(heatmap, date);
+    for (const date of ['2024-02-29', previousDate(today), today]) await complete(streak, date);
+    const current = await dashboard();
+    expect(current).toMatchObject({ year: 2026, firstYear: 2024, today });
+    expect(current.days).toHaveLength(365);
+    expect(current.days.filter((day) => day.count)).toHaveLength(1);
+    for (const year of [2024, 2025]) {
+      const past = await dashboard(year);
+      expect(past).toMatchObject({ year, firstYear: 2024, today });
+      expect(past.days.map((day) => day.date)).toEqual(datesInYear(year));
+      expect(past.days[0].date).toBe(`${year}-01-01`);
+      expect(past.days.at(-1)?.date).toBe(`${year}-12-31`);
+      expect(past.heatmapRoutines).toEqual(current.heatmapRoutines);
+      expect(past.streakRoutines).toEqual(current.streakRoutines);
+      expect(past.days.filter((day) => day.count).map((day) => day.date)).toEqual(year === 2024 ? ['2024-02-29', '2024-12-31'] : ['2025-01-01']);
+    }
+    expect((await dashboard(2024)).days.find((day) => day.date === '2024-02-29')).toEqual({
+      date: '2024-02-29', count: 1, completedRoutines: [{ id: heatmap, name: 'Reading', symbol: '📚' }],
+    });
+    expect(current.days.filter((day) => day.date > today).every((day) => day.count === 0 && day.completedRoutines.length === 0)).toBe(true);
+  });
+
+  it('preserves the selected response year across historical edits and independent daily mutations', async () => {
+    db.prepare('UPDATE app_settings SET first_use_date = ?').run('2024-01-01');
+    const heatmap = await create('Project', 'heatmap', '💻');
+    const streak = await create('Stretch', 'streak', '🧘');
+    await complete(heatmap, '2025-06-01');
+    const otherYear = (await dashboard(2025)).days;
+    const response = await write(`routines/${heatmap}/completion?year=2024`, { date: '2024-02-29', completed: true });
+    expect(response.status).toBe(200);
+    const edited = await response.json() as Dashboard;
+    expect(edited.year).toBe(2024);
+    expect(edited.days.find((day) => day.date === '2024-02-29')?.count).toBe(1);
+    expect(edited.heatmapRoutines[0].completed).toBe(false);
+    expect((await dashboard(2025)).days).toEqual(otherYear);
+    const daily = await write(`routines/${heatmap}/completion?year=2024`, { date: today, completed: true, todayOnly: true });
+    const dailyData = await daily.json() as Dashboard;
+    expect(dailyData.year).toBe(2024);
+    expect(dailyData.days).toEqual(edited.days);
+    expect(dailyData.heatmapRoutines[0].completed).toBe(true);
+    const streakResponse = await write(`routines/${streak}/completion?year=2024`, { date: today, completed: true });
+    const streakData = await streakResponse.json() as Dashboard;
+    expect(streakData.year).toBe(2024);
+    expect(streakData.days).toEqual(edited.days);
+    expect(streakData.streakRoutines[0]).toMatchObject({ streak: 1, completed: true });
+    for (const [path, body, method] of [
+      ['routines', { name: 'New', type: 'heatmap' }, 'POST'],
+      [`routines/${heatmap}`, { name: 'Work', symbol: '💻' }, 'PUT'],
+      ['settings', { color: '#2864b4', mode: 'dark' }, 'PUT'],
+    ] as const) {
+      const saved = await write(`${path}?year=2024`, body, method);
+      expect((await saved.json() as Dashboard).year).toBe(2024);
+    }
+    db.close(); db = openDatabase(join(directory, 'routines.sqlite'), '2027-01-01');
+    expect(getDashboard(db, today, 2024).days.find((day) => day.date === '2024-02-29')?.count).toBe(1);
+    expect(getDashboard(db, today, 2025).days).toEqual(otherYear.map((day) => ({
+      ...day, completedRoutines: day.completedRoutines.map((routine) => ({ ...routine, name: 'Work' })),
+    })));
+  });
+
+  it('uses persisted first use rather than backfilled activity and advances the available range at New Year', async () => {
+    const empty = await dashboard();
+    expect(empty).toMatchObject({ firstYear: 2026, year: 2026 });
+    const heatmap = await create('Backfill', 'heatmap');
+    await complete(heatmap, '2010-01-01');
+    expect((await dashboard()).firstYear).toBe(2026);
+    expect((await fetch(`${base}/api/dashboard?year=2010`)).status).toBe(400);
+    today = '2027-01-01';
+    expect(await dashboard()).toMatchObject({ firstYear: 2026, year: 2027, today });
+    expect(await dashboard(2026)).toMatchObject({ firstYear: 2026, year: 2026, today });
+    expect(db.prepare('SELECT first_use_date FROM app_settings').get()).toEqual({ first_use_date: '2026-10-04' });
+  });
+
+  it('rejects invalid or unavailable response years before writing', async () => {
+    const id = await create('Gym', 'heatmap');
+    for (const year of ['', '2025', '2027', '2026.5', '2026abc', '026', '10000', '2026&year=2025']) {
+      expect((await fetch(`${base}/api/dashboard?year=${year}`)).status).toBe(400);
+      expect((await write(`routines/${id}/completion?year=${year}`, { date: today, completed: true })).status).toBe(400);
+    }
+    expect(db.prepare('SELECT * FROM completions').all()).toEqual([]);
+  });
+
+  it('persists every global color and both modes without altering routine metadata or history', async () => {
+    const heatmap = await create('Reading', 'heatmap', '📚');
+    const streak = await create('Stretch', 'streak', '🧘');
+    await complete(heatmap); await complete(streak);
+    const routines = db.prepare('SELECT * FROM routines ORDER BY id').all();
+    const completions = db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all();
+    expect((await dashboard()).appearance).toEqual({ color: '#216743', mode: 'light' });
+    for (const { value: color } of themeColors) {
+      for (const mode of ['light', 'dark']) {
+        const response = await write('settings', { color, mode });
+        expect(response.status).toBe(200);
+        expect((await response.json() as Dashboard).appearance).toEqual({ color, mode });
+        expect((await dashboard()).appearance).toEqual({ color, mode });
+      }
+    }
+    const final = await dashboard();
+    db.close(); db = openDatabase(join(directory, 'routines.sqlite'), '2028-01-01');
+    expect(getDashboard(db, today)).toEqual(final);
+    expect(db.prepare('SELECT * FROM routines ORDER BY id').all()).toEqual(routines);
+    expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(completions);
+    expect(db.prepare('SELECT first_use_date FROM app_settings').get()).toEqual({ first_use_date: '2026-10-04' });
+  });
+
+  it('rejects malformed settings and attempts to alter the first-use boundary', async () => {
+    const before = await dashboard();
+    for (const body of [
+      {}, null, [], { color: '#ffffff', mode: 'light' }, { color: '#216743', mode: 'system' },
+      { color: '#216743' }, { mode: 'dark' }, { color: 123, mode: 'dark' },
+      { color: '#216743', mode: 'dark', firstUseDate: '2000-01-01' },
+    ]) expect((await write('settings', body)).status).toBe(400);
+    expect(await dashboard()).toEqual(before);
+  });
 });
 
 for (const version of [0, 1]) {
-  it(`migrates schema v${version} to two tables, preserving all IDs, completions and available appearance/order`, () => {
+  it(`migrates schema v${version}, preserving all IDs, completions and available appearance/order`, () => {
     const directory = mkdtempSync(join(tmpdir(), 'routine-migration-'));
     const filename = join(directory, 'old.sqlite');
     let db = new Database(filename);
@@ -220,9 +340,9 @@ for (const version of [0, 1]) {
       expect(data.streakRoutines).toEqual([]);
       expect(data.days.find((d) => d.date === '2026-03-10')?.count).toBe(1);
       expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(completions);
-      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'completions' }, { name: 'routines' }]);
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'app_settings' }, { name: 'completions' }, { name: 'routines' }]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
-      expect(db.pragma('user_version', { simple: true })).toBe(3);
+      expect(db.pragma('user_version', { simple: true })).toBe(4);
       db.close(); db = openDatabase(filename);
       expect(getDashboard(db, '2026-10-04')).toEqual(data);
     } finally {
@@ -263,11 +383,44 @@ it('migrates v2 placeholder symbols and SQLite defaults while preserving custom 
     expect(data.streakRoutines).toMatchObject([{ id: 5, symbol: '', streak: 1 }, { id: 9, symbol: '•', streak: 1 }]);
     expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(4);
     db.prepare("INSERT INTO routines (id, name) VALUES (10, 'SQL default')").run();
     expect(db.prepare('SELECT symbol FROM routines WHERE id = 10').get()).toEqual({ symbol: '' });
     db.close(); db = openDatabase(filename);
     expect(getDashboard(db, '2026-10-04').heatmapRoutines.find((r) => r.id === 8)?.symbol).toBe('📚');
+  } finally {
+    if (db.open) db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it('upgrades v3 with an honest first-use fallback and retains all existing activity and metadata', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'settings-migration-'));
+  const filename = join(directory, 'v3.sqlite');
+  let db = new Database(filename);
+  try {
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE routines (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL,
+        position INTEGER NOT NULL, accent_color TEXT NOT NULL, symbol TEXT NOT NULL DEFAULT '');
+      CREATE TABLE completions (routine_id INTEGER NOT NULL REFERENCES routines(id), date TEXT NOT NULL,
+        PRIMARY KEY (routine_id, date));
+      INSERT INTO routines VALUES (8, 'Reading', 'heatmap', 3, '#8054ad', '📚'), (12, 'Stretch', 'streak', 2, '#2864b4', '');
+      INSERT INTO completions VALUES (8, '2019-12-31'), (8, '2026-10-01'), (12, '2026-10-01');
+      PRAGMA user_version = 3;
+    `);
+    const routines = db.prepare('SELECT * FROM routines ORDER BY id').all();
+    const completions = db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all();
+    db.close(); db = openDatabase(filename, '2026-10-09');
+    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+    expect(db.prepare('SELECT * FROM routines ORDER BY id').all()).toEqual(routines);
+    expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(completions);
+    expect(getDashboard(db, '2026-10-09')).toMatchObject({ firstYear: 2026, appearance: { color: '#216743', mode: 'light' } });
+    expect(() => getDashboard(db, '2026-10-09', 2019)).toThrow('Choose a year between 2026 and 2026.');
+    db.close(); db = openDatabase(filename, '2027-02-01');
+    expect(db.prepare('SELECT first_use_date FROM app_settings').get()).toEqual({ first_use_date: '2026-10-09' });
+    expect(getDashboard(db, '2027-02-01', 2026).days.find((day) => day.date === '2026-10-01')?.count).toBe(1);
   } finally {
     if (db.open) db.close();
     rmSync(directory, { recursive: true, force: true });

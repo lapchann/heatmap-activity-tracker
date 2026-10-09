@@ -1,4 +1,4 @@
-export const routineColors = [
+export const themeColors = [
   { value: '#216743', name: 'Green' },
   { value: '#2864b4', name: 'Blue' },
   { value: '#8054ad', name: 'Purple' },
@@ -7,4 +7,5 @@ export const routineColors = [
   { value: '#397e85', name: 'Teal' },
 ] as const;
 
-export const defaultRoutineColor = routineColors[0].value;
+export type ThemeColor = typeof themeColors[number]['value'];
+export const defaultRoutineColor = themeColors[0].value;

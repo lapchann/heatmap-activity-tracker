@@ -1,4 +1,11 @@
+import type { ThemeColor } from './colors.js';
+
 export type RoutineType = 'heatmap' | 'streak';
+
+export interface Appearance {
+  color: ThemeColor;
+  mode: 'light' | 'dark';
+}
 
 export interface Routine {
   id: number;
@@ -26,6 +33,8 @@ export interface DayActivity {
 export interface Dashboard {
   today: string;
   year: number;
+  firstYear: number;
+  appearance: Appearance;
   heatmapRoutines: HeatmapRoutine[];
   streakRoutines: StreakRoutine[];
   days: DayActivity[];
