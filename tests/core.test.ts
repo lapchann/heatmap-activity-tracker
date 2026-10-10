@@ -160,7 +160,7 @@ describe('typed routine API and persistence', () => {
     expect((await write('routines/1x/completion', { date: today, completed: true })).status).toBe(400);
     expect((await write(`routines/${id}/archive`, { effectiveDate: today }, 'POST')).status).toBe(404);
     expect((await write(`routines/${id}/reactivate`, { effectiveDate: today }, 'POST')).status).toBe(404);
-    expect((await write(`routines/${id}`, {}, 'DELETE')).status).toBe(404);
+    expect((await write('routines/999', {}, 'DELETE')).status).toBe(404);
     expect(db.prepare('SELECT * FROM completions').all()).toEqual([]);
     expect(() => db.prepare("UPDATE routines SET type = 'both' WHERE id = ?").run(id)).toThrow();
     expect((await write(`routines/${id}/completion`, { date: '2024-02-29', completed: true })).status).toBe(200);
@@ -342,7 +342,7 @@ for (const version of [0, 1]) {
       expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(completions);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()).toEqual([{ name: 'app_settings' }, { name: 'completions' }, { name: 'routines' }]);
       expect(db.pragma('foreign_key_check')).toEqual([]);
-      expect(db.pragma('user_version', { simple: true })).toBe(4);
+      expect(db.pragma('user_version', { simple: true })).toBe(5);
       db.close(); db = openDatabase(filename);
       expect(getDashboard(db, '2026-10-04')).toEqual(data);
     } finally {
@@ -383,7 +383,7 @@ it('migrates v2 placeholder symbols and SQLite defaults while preserving custom 
     expect(data.streakRoutines).toMatchObject([{ id: 5, symbol: '', streak: 1 }, { id: 9, symbol: '•', streak: 1 }]);
     expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     db.prepare("INSERT INTO routines (id, name) VALUES (10, 'SQL default')").run();
     expect(db.prepare('SELECT symbol FROM routines WHERE id = 10').get()).toEqual({ symbol: '' });
     db.close(); db = openDatabase(filename);
@@ -412,9 +412,9 @@ it('upgrades v3 with an honest first-use fallback and retains all existing activ
     const routines = db.prepare('SELECT * FROM routines ORDER BY id').all();
     const completions = db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all();
     db.close(); db = openDatabase(filename, '2026-10-09');
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     expect(db.pragma('foreign_key_check')).toEqual([]);
-    expect(db.prepare('SELECT * FROM routines ORDER BY id').all()).toEqual(routines);
+    expect(db.prepare('SELECT id, name, type, position, accent_color, symbol FROM routines ORDER BY id').all()).toEqual(routines);
     expect(db.prepare('SELECT * FROM completions ORDER BY routine_id, date').all()).toEqual(completions);
     expect(getDashboard(db, '2026-10-09')).toMatchObject({ firstYear: 2026, appearance: { color: '#216743', mode: 'light' } });
     expect(() => getDashboard(db, '2026-10-09', 2019)).toThrow('Choose a year between 2026 and 2026.');

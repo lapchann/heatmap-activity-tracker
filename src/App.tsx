@@ -81,17 +81,21 @@ export function App() {
     if (dashboard) void mutate('/api/settings', 'PUT', appearance, { ...dashboard, appearance });
   }
 
+  const heatmapHistory = dashboard ? [...dashboard.heatmapRoutines, ...dashboard.deletedHeatmapRoutines]
+    .sort((a, b) => a.position - b.position || a.id - b.id) : [];
+
   function toggle(id: number, date: string, completed: boolean, todayOnly = false) {
     if (!dashboard) return;
-    const heatmapRoutine = dashboard.heatmapRoutines.find((routine) => routine.id === id);
+    const heatmapRoutine = heatmapHistory.find((routine) => routine.id === id);
     const optimistic: Dashboard = { ...dashboard };
     if (heatmapRoutine) {
+      if (heatmapRoutine.deletedOn !== null && date >= heatmapRoutine.deletedOn) return;
       optimistic.heatmapRoutines = dashboard.heatmapRoutines.map((r) => r.id === id && date === dashboard.today ? { ...r, completed } : r);
       optimistic.days = dashboard.days.map((day) => {
         if (day.date !== date) return day;
         const ids = new Set(day.completedRoutines.map((r) => r.id));
         if (completed) ids.add(id); else ids.delete(id);
-        const completedRoutines = dashboard.heatmapRoutines.filter((r) => ids.has(r.id)).map(({ id, name, symbol }) => ({ id, name, symbol }));
+        const completedRoutines = heatmapHistory.filter((r) => ids.has(r.id)).map(({ id, name, symbol }) => ({ id, name, symbol }));
         return { ...day, count: completedRoutines.length, completedRoutines };
       });
     } else {
@@ -136,7 +140,7 @@ export function App() {
       {managingRoutines && <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error}
         appearance={dashboard.appearance} onAppearanceChange={changeAppearance} onMutate={mutate} onClose={() => setManagingRoutines(false)} />}
       {editingDay && <HeatmapEditor date={editingDay.date} error={error} busy={busy || loading} onClose={() => setEditingDate(null)}
-        routines={dashboard.heatmapRoutines.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
+        routines={heatmapHistory.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
         onToggle={(id, completed) => toggle(id, editingDay.date, completed)} />}
     </>}
   </main>;

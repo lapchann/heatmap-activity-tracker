@@ -32,9 +32,11 @@ Use Appearance in Manage routines to choose one of six global colors and Light o
 
 Each streak routine has its own card and completion control. Streaks are derived from that routine's consecutive completed local dates: count back from today if done, otherwise yesterday. An incomplete today keeps yesterday's streak until the day ends. Use Correct history on a card to toggle a past date. Future edits are rejected. Heatmap completions never affect streaks, and streak completions never affect the heatmap.
 
-The runtime schema contains `routines` (ID, name, type, position, accent color, symbol), `completions` (routine ID, date), and one `app_settings` row (first-use date, global color, appearance mode). Earlier databases upgrade automatically through transactional migrations to `user_version = 4`. IDs, completions, order, and stored routine colors are preserved. The old default ● placeholder is cleared, other symbols are retained, and new routines default to no symbol. Stored routine colors are no longer edited or displayed. Original Milestone 1 and lifecycle-era routines become ordinary heatmap routines, and the obsolete active-period table is removed. No database recreation is needed.
+Delete in Manage routines asks for confirmation, then stops tracking that routine immediately. The routine and every recorded completion remain in SQLite, including completions made earlier on the deletion day. Heatmap counts and symbols remain visible in every eligible year. Deleted heatmap routines can still be corrected on dates before deletion; saved activity on or after deletion is read-only in the date editor. Deleted streak routines retain their history internally and reject all further completion edits. There is no restore or permanent-erasure control.
 
-`GET /api/dashboard?year=2024` loads an eligible heatmap year. Mutation endpoints accept the same optional query parameter to return that year's updated dashboard; it never changes the date being edited. `PUT /api/settings` accepts `{ "color": "#2864b4", "mode": "dark" }`. Dashboard responses include the selected `year`, `firstYear`, and `appearance`.
+The runtime schema contains `routines` (ID, name, type, position, accent color, symbol, nullable `deleted_on`), `completions` (routine ID, date), and one `app_settings` row (first-use date, global color, appearance mode). Earlier databases upgrade automatically through transactional migrations to `user_version = 5`. IDs, completions, order, and stored routine colors are preserved. The old default ● placeholder is cleared, other symbols are retained, and new routines default to no symbol. Stored routine colors are no longer edited or displayed. Original Milestone 1 and lifecycle-era routines become ordinary heatmap routines, and the obsolete active-period table is removed. No database recreation is needed.
+
+`GET /api/dashboard?year=2024` loads an eligible heatmap year. Mutation endpoints accept the same optional query parameter to return that year's updated dashboard; it never changes the date being edited. `PUT /api/settings` accepts `{ "color": "#2864b4", "mode": "dark" }`. Dashboard responses include the selected `year`, `firstYear`, and `appearance`. `DELETE /api/routines/:id` accepts an empty body and records the local deletion date; retries preserve the original date. Active lists exclude deleted routines, while `deletedHeatmapRoutines` supplies metadata for historical corrections.
 
 ```sh
 npm run typecheck
@@ -42,4 +44,4 @@ npm test
 npm run build
 ```
 
-Routine type changes, remove/hide controls, heatmap filtering, additional analytics, startup automation, and final visual polish are deferred.
+Routine type changes, drag-and-drop ordering, heatmap filtering, additional analytics, startup automation, and final visual polish are deferred.

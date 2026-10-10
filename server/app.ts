@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
 import { isCalendarDate, localDate } from '../shared/dates.js';
 import { defaultRoutineColor, themeColors } from '../shared/colors.js';
 import type { RoutineType } from '../shared/types.js';
-import { createRoutine, getDashboard, reorderRoutines, resolveHeatmapYear, RoutineError, setCompletion, updateAppearance, updateRoutine } from './database.js';
+import { createRoutine, deleteRoutine, getDashboard, reorderRoutines, resolveHeatmapYear, RoutineError, setCompletion, updateAppearance, updateRoutine } from './database.js';
 
 function validType(value: unknown): value is RoutineType { return value === 'heatmap' || value === 'streak'; }
 
@@ -73,6 +73,11 @@ export function createApp(db: Database.Database, today = () => localDate()) {
     fields(req.body, ['name', 'accentColor', 'symbol']);
     const { name, accentColor, symbol } = metadata(req.body);
     updateRoutine(db, Number(req.params.id), name, accentColor, symbol);
+    res.json(getDashboard(db, res.locals.today, res.locals.year));
+  });
+  app.delete('/api/routines/:id', (req, res) => {
+    fields(req.body === undefined ? {} : req.body, []);
+    deleteRoutine(db, Number(req.params.id), res.locals.today);
     res.json(getDashboard(db, res.locals.today, res.locals.year));
   });
   app.put('/api/routines/:id/completion', (req, res) => {

@@ -114,6 +114,13 @@ summary { cursor: pointer; }
 .order-buttons { display: flex; gap: 6px; flex-shrink: 0; }
 .secondary-button { padding: 7px 12px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: inherit; }
 .secondary-button:hover:not(:disabled) { background: var(--background); }
+.delete-button { color: var(--error-text); border-color: var(--error-border); }
+.delete-button:hover:not(:disabled) { background: var(--error-background); }
+.delete-confirmation { width: min(460px, calc(100% - 32px)); overflow-wrap: anywhere; }
+.delete-confirmation > p { margin-top: 16px; }
+.confirmation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.confirm-delete, .confirm-delete:hover:not(:disabled) { background: var(--error-text); color: var(--surface); }
+.delete-confirmation button[aria-disabled="true"] { opacity: .65; cursor: wait; }
 .metadata-fields { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 0 0 8px; padding: 0; border: 0; min-width: 0; }
 .metadata-fields label { font-size: 13px; min-width: 0; }
 .metadata-fields label:first-child { flex: 1; min-width: 150px; }
@@ -167,6 +174,9 @@ dialog.panel { color: inherit; max-height: calc(100dvh - 48px); overflow-y: auto
 .date-editor { width: min(520px, calc(100% - 32px)); }
 dialog::backdrop { background: #15251d70; }
 .date-editor .routine-list { margin-top: 16px; margin-bottom: 0; }
+.retained-completions { margin-top: 20px; }
+.retained-completions h3 { font-size: 16px; margin: 0 0 4px; }
+.retained-completions .routine { cursor: default; }
 .day-cell.future { cursor: default; }
 @media (max-width: 1000px) {
   .dashboard-columns { grid-template-columns: minmax(0, 1fr); }

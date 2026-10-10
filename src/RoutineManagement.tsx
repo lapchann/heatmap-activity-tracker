@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import type { Appearance, Routine, RoutineType } from '../shared/types';
 import { themeColors } from '../shared/colors';
+import { DeleteRoutineDialog } from './DeleteRoutineDialog';
 
 interface Props {
   routines: Routine[];
@@ -15,15 +16,28 @@ interface Props {
 
 export function RoutineManagement({ routines, busy, error, appearance, onAppearanceChange, onMutate, onClose }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const [name, setName] = useState('');
   const [type, setType] = useState<RoutineType>('heatmap');
   const [symbol, setSymbol] = useState('');
   const [notice, setNotice] = useState('');
+  const [deleting, setDeleting] = useState<Routine | null>(null);
+  const stillTracked = deleting !== null && routines.some((routine) => routine.id === deleting.id);
   useEffect(() => {
     const dialog = ref.current!;
     dialog.showModal();
     return () => dialog.close();
   }, []);
+
+  useEffect(() => {
+    // Only a confirmed dashboard response removes the routine, including recovery
+    // after a lost DELETE response. A failed write leaves the confirmation open.
+    if (deleting && !stillTracked) {
+      setNotice(`Deleted ${deleting.name}. Recorded history is preserved.`);
+      setDeleting(null);
+      closeRef.current?.focus();
+    }
+  }, [deleting, stillTracked]);
 
   function close() {
     ref.current?.close();
@@ -55,10 +69,10 @@ export function RoutineManagement({ routines, busy, error, appearance, onAppeara
     void onMutate('/api/routines/order', 'PUT', { type: group[index].type, ids });
   }
 
-  return <dialog ref={ref} className="panel management" aria-labelledby="management-heading" onKeyDown={keepFocus} onCancel={(event) => { event.preventDefault(); close(); }}>
+  return <><dialog ref={ref} className="panel management" aria-labelledby="management-heading" onKeyDown={keepFocus} onCancel={(event) => { event.preventDefault(); close(); }}>
     <div className="section-heading">
       <h2 id="management-heading">Manage routines</h2>
-      <button type="button" className="secondary-button" onClick={close}>Close</button>
+      <button ref={closeRef} type="button" className="secondary-button" onClick={close}>Close</button>
     </div>
     <p className="muted management-intro">Heatmap routines record meaningful effort. Streak routines build daily consistency.</p>
     {error && <p className="management-error" role="alert">{error}</p>}
@@ -105,14 +119,17 @@ export function RoutineManagement({ routines, busy, error, appearance, onAppeara
               <button type="button" className="secondary-button" aria-label={`Move ${routine.name} down`} disabled={busy || index === group.length - 1} onClick={() => move(group, index, 1)}>↓</button>
             </div>
           </div>
-          <RoutineEditor key={`${routine.id}:${routine.name}:${routine.symbol}`} routine={routine} busy={busy} onMutate={onMutate} />
+          <RoutineEditor key={`${routine.id}:${routine.name}:${routine.symbol}`} routine={routine} busy={busy} onMutate={onMutate} onDelete={() => setDeleting(routine)} />
         </li>)}</ul>
       </section>;
     })}
-  </dialog>;
+  </dialog>
+    {deleting && stillTracked && <DeleteRoutineDialog routine={deleting} busy={busy} error={error}
+      onConfirm={() => { void onMutate(`/api/routines/${deleting.id}`, 'DELETE', {}); }} onClose={() => setDeleting(null)} />}
+  </>;
 }
 
-function RoutineEditor({ routine, busy, onMutate }: Pick<Props, 'busy' | 'onMutate'> & { routine: Routine }) {
+function RoutineEditor({ routine, busy, onMutate, onDelete }: Pick<Props, 'busy' | 'onMutate'> & { routine: Routine; onDelete: () => void }) {
   const [name, setName] = useState(routine.name);
   const [symbol, setSymbol] = useState(routine.symbol);
   const changed = name.trim() !== routine.name || symbol !== routine.symbol;
@@ -121,6 +138,7 @@ function RoutineEditor({ routine, busy, onMutate }: Pick<Props, 'busy' | 'onMuta
       <label>Name<input value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} /></label>
       <label className="symbol-field">Symbol<input value={symbol} maxLength={16} onChange={(event) => setSymbol(event.target.value)} /></label>
       <button type="submit" className="secondary-button" disabled={!changed || !name.trim()}>Save changes</button>
+      <button type="button" className="secondary-button delete-button" aria-label={`Delete ${routine.name}`} onClick={onDelete}>Delete</button>
     </fieldset>
   </form>;
 }

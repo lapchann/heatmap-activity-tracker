@@ -15,6 +15,7 @@ export interface Routine {
   accentColor: string;
   symbol: string;
   completed: boolean;
+  deletedOn: string | null;
 }
 
 export interface HeatmapRoutine extends Routine { type: 'heatmap' }
@@ -36,6 +37,7 @@ export interface Dashboard {
   firstYear: number;
   appearance: Appearance;
   heatmapRoutines: HeatmapRoutine[];
+  deletedHeatmapRoutines: HeatmapRoutine[];
   streakRoutines: StreakRoutine[];
   days: DayActivity[];
 }
