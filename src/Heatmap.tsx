@@ -107,7 +107,7 @@ function Calendar({ year, today, days, onEdit }: CalendarProps) {
           {days.map((day, index) => <button key={day.date} type="button"
             className={`day-cell level-${completionLevel(day.count)}${day.date > today ? ' future' : ''}${day.date === today ? ' is-today' : ''}`}
             data-date={day.date} aria-label={describeDay(day)} aria-current={day.date === today ? 'date' : undefined}
-            tabIndex={day.date === tabDate ? 0 : -1} aria-describedby={day.date === activeDate ? (showTooltip ? tooltipId : 'heatmap-details') : undefined}
+            tabIndex={day.date === tabDate ? 0 : -1} aria-describedby={day.date === activeDate && showTooltip ? tooltipId : undefined}
             onMouseEnter={(event) => { setHoveredCell(event.currentTarget); setTooltipDismissed(false); }} onMouseLeave={() => setHoveredCell(null)}
             onFocus={(event) => { setHoveredCell(null); setFocusedCell(event.currentTarget); setTabDate(day.date); setTooltipDismissed(false); }} onBlur={() => setFocusedCell(null)}
             onKeyDown={(event) => moveFocus(event, index)}
@@ -117,12 +117,10 @@ function Calendar({ year, today, days, onEdit }: CalendarProps) {
       </div>
     </div>
     <div className="heatmap-footer">
-      <div id="heatmap-details" className="day-description" aria-live="polite">
-        <p>{describeDay(selectedDay)}</p>
-        {symbolLine}
-      </div>
-      <div className="legend" aria-label="Heatmap completions: 0, 1, 2, 3, 4 or more">
-        {[0, 1, 2, 3, 4].map((level) => <span key={level} className="legend-step"><i className={`legend-cell level-${level}`} />{level === 4 ? '4+' : level}</span>)}
+      <div className="legend" role="img" aria-label="Heatmap completion intensity from less to more">
+        <span>Less</span>
+        {[0, 1, 2, 3, 4].map((level) => <i key={level} className={`legend-cell level-${level}`} aria-hidden="true" />)}
+        <span>More</span>
       </div>
     </div>
     {showTooltip && <DayTooltip anchor={activeCell} id={tooltipId} onDismiss={() => setTooltipDismissed(true)}>
