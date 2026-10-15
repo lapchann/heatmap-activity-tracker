@@ -11,3 +11,5 @@ data/
 .env.*
 !.env.example
 *.log
+test-results/
+playwright-report/
