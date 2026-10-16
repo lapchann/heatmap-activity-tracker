@@ -97,37 +97,76 @@ async function openManagement(page: Page, url: string) {
 async function saved(page: Page) {
   await expect(page.getByRole('status').filter({ hasText: /^Up to date$/ })).toHaveCount(1);
 }
-async function keyboardMove(page: Page, name: string, direction: 'ArrowUp' | 'ArrowDown', steps = 1) {
-  await handle(page, name).focus();
+async function settled(page: Page) {
+  await expect.poll(() => management(page).evaluate((node) =>
+    node.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running' || animation.pending).length,
+  )).toBe(0);
+}
+async function saveOrder(page: Page, drop: () => Promise<void>) {
+  const response = page.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === '/api/routines/order');
+  await drop();
+  const result = await response;
+  expect(result.status()).toBe(200);
+  expect(await result.finished()).toBeNull();
+  await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
+  await saved(page);
+  await settled(page);
+}
+async function keyboardDrag(page: Page, name: string, direction: 'ArrowUp' | 'ArrowDown', steps = 1) {
+  const grip = handle(page, name);
+  await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
+  await expect(grip).toHaveAttribute('aria-disabled', 'false');
+  await grip.scrollIntoViewIfNeeded();
+  await settled(page);
+  await grip.focus();
+  await expect(grip).toBeFocused();
+  const order = await page.getByRole('list').filter({ has: grip }).getByRole('button', { name: /^Reorder / })
+    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')));
+  let position = order.indexOf(`Reorder ${name}`) + 1;
+  expect(position).toBeGreaterThan(0);
   await page.keyboard.press('Space');
+  await expect(grip).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.routine-drag-preview')).toBeVisible();
+  // The preview appears before dnd-kit has measured collisions and installed
+  // its keyboard listener. The initial drag-over announcement confirms readiness.
+  await expect(page.getByRole('status').filter({ hasText: `${name}, drop at position ${position} of ${order.length}.` })).toHaveCount(1);
   for (let i = 0; i < steps; i++) {
     await page.keyboard.press(direction);
-    // Let the sortable transition and keyboard scroll settle between steps.
-    await page.waitForTimeout(280);
+    position += direction === 'ArrowUp' ? -1 : 1;
+    await expect(page.locator('.routine-drag-preview')).toContainText(`Position ${position} of ${order.length}`);
+    await settled(page);
   }
-  await page.keyboard.press('Enter');
-  await saved(page);
+}
+async function keyboardMove(page: Page, name: string, direction: 'ArrowUp' | 'ArrowDown', steps = 1) {
+  await keyboardDrag(page, name, direction, steps);
+  await saveOrder(page, () => page.keyboard.press('Enter'));
 }
 async function pointerStart(page: Page, name: string) {
   const grip = handle(page, name);
+  await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
+  await expect(grip).toHaveAttribute('aria-disabled', 'false');
   await grip.scrollIntoViewIfNeeded();
+  await settled(page);
   const rect = (await grip.boundingBox())!;
   const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   await page.mouse.move(point.x, point.y);
   await page.mouse.down();
   await page.mouse.move(point.x, point.y + 8, { steps: 3 });
+  await expect(grip).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.routine-drag-preview')).toBeVisible();
   return point;
 }
 async function pointerMove(page: Page, name: string, targetName: string) {
-  // Capture the target before the list animates.
   await handle(page, targetName).scrollIntoViewIfNeeded();
-  const target = (await handle(page, targetName).boundingBox())!;
   const point = await pointerStart(page, name);
+  // Pickup may scroll the source into view. Measure after that scroll, before
+  // crossing any rows starts the sortable transitions.
+  const target = (await handle(page, targetName).boundingBox())!;
   await page.mouse.move(point.x, target.y + target.height / 2, { steps: 20 });
-  await page.mouse.up();
-  await saved(page);
+  const order = await page.getByRole('list').filter({ has: handle(page, name) }).getByRole('heading', { level: 4 }).allTextContents();
+  await expect(page.locator('.routine-drag-preview')).toContainText(`Position ${order.indexOf(targetName) + 1} of ${order.length}`);
+  await saveOrder(page, () => page.mouse.up());
 }
 async function dashboard(page: Page, url: string): Promise<Dashboard> {
   return (await page.request.get(`${url}/api/dashboard`)).json() as Promise<Dashboard>;
@@ -182,10 +221,10 @@ test('cancelled, cross-type, no-op, and input gestures do not save; editing draf
   await page.mouse.move(bounds.x + 100, bounds.y + 30, { steps: 8 });
   await page.mouse.up();
   await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
-  await handle(page, 'Reading').focus();
-  await page.keyboard.press('Space');
-  await page.keyboard.press('ArrowDown');
+  await keyboardDrag(page, 'Reading', 'ArrowDown');
   await page.keyboard.press('Escape');
+  await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
+  await settled(page);
   await expect(management(page)).toBeVisible();
   await expect(handle(page, 'Reading')).toBeFocused();
   await expect(names(page, 'heatmap')).toHaveText(['Reading', 'Gym', 'Study']);
@@ -194,9 +233,18 @@ test('cancelled, cross-type, no-op, and input gestures do not save; editing draf
   await page.mouse.move(other.x + 10, other.y + 10, { steps: 20 });
   await expect(page.locator('.routine-drag-preview')).toContainText('Outside list');
   await page.mouse.up();
+  await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
+  await settled(page);
+  await expect(names(page, 'heatmap')).toHaveText(['Reading', 'Gym', 'Study']);
+  await expect(names(page, 'streak')).toHaveText(['Stretch', 'Water', 'Walk']);
   await handle(page, 'Reading').click();
+  await keyboardDrag(page, 'Reading', 'ArrowDown', 0);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.routine-drag-preview')).toHaveCount(0);
+  await settled(page);
   expect(writes).toBe(0);
   await keyboardMove(page, 'Reading', 'ArrowDown');
+  await expect(names(page, 'heatmap')).toHaveText(['Gym', 'Reading', 'Study']);
   await expect(input).toHaveValue('Reading draft');
   await readingRow.getByRole('textbox', { name: 'Symbol', exact: true }).fill('📚');
   await readingRow.getByRole('button', { name: 'Save changes' }).click();
@@ -211,11 +259,12 @@ test('failed writes roll back atomically, survive failed recovery reads, and all
   // Abort after at least one row has been updated to exercise transaction rollback.
   app.db.exec("CREATE TRIGGER fail_order BEFORE UPDATE OF position ON routines WHEN NEW.position = 1 BEGIN SELECT RAISE(ABORT, 'simulated order failure'); END;");
   await page.route('**/api/dashboard*', (route) => route.abort('failed'));
-  await handle(page, 'Reading').focus();
-  await page.keyboard.press('Space');
-  await page.keyboard.press('ArrowDown');
-  await page.waitForTimeout(280);
+  await keyboardDrag(page, 'Reading', 'ArrowDown');
+  const failedWrite = page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/api/routines/order'));
+  const failedRecovery = page.waitForEvent('requestfailed', (request) => request.url().includes('/api/dashboard'));
   await page.keyboard.press('Enter');
+  expect((await failedWrite).status()).toBe(500);
+  await failedRecovery;
   await expect(management(page).getByRole('alert')).toContainText('Unable to access');
   await expect(names(page, 'heatmap')).toHaveText(['Reading', 'Gym', 'Study']);
   await expect(management(page).getByRole('status').filter({ hasText: 'Could not confirm the save' })).toBeVisible();
@@ -226,15 +275,23 @@ test('failed writes roll back atomically, survive failed recovery reads, and all
   await keyboardMove(page, 'Reading', 'ArrowDown');
   await expect(names(page, 'heatmap')).toHaveText(['Gym', 'Reading', 'Study']);
   // A lost response after a successful write must reconcile with SQLite.
-  await page.route('**/api/routines/order*', async (route) => { await route.fetch(); await route.abort('failed'); });
-  await handle(page, 'Walk').focus();
-  await page.keyboard.press('Space');
-  await page.keyboard.press('ArrowUp');
-  await page.waitForTimeout(280);
+  await page.route('**/api/routines/order*', async (route) => {
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort('failed');
+  });
+  await keyboardDrag(page, 'Walk', 'ArrowUp');
+  const lostResponse = page.waitForEvent('requestfailed', (request) => request.url().includes('/api/routines/order'));
+  const recovery = page.waitForResponse((response) => response.request().method() === 'GET' && response.url().includes('/api/dashboard'));
   await page.keyboard.press('Enter');
+  await lostResponse;
+  expect((await recovery).status()).toBe(200);
+  await expect(management(page).getByRole('alert')).toContainText('Failed to fetch');
+  await expect(management(page).getByRole('status').filter({ hasText: 'Could not confirm the save' })).toBeVisible();
+  await expect(handle(page, 'Walk')).toHaveAttribute('aria-disabled', 'false');
   await expect(names(page, 'streak')).toHaveText(['Stretch', 'Walk', 'Water']);
   expect((await dashboard(page, app.url)).streakRoutines.map((r) => r.name)).toEqual(['Stretch', 'Walk', 'Water']);
   expect(app.snapshot()).toEqual(before);
+  await page.unroute('**/api/routines/order*');
 });
 
 test('scrolling long lists supports pointer autoscroll and keyboard moves at a narrow viewport', async ({ page, app }) => {
@@ -246,8 +303,7 @@ test('scrolling long lists supports pointer autoscroll and keyboard moves at a n
   const dialog = (await management(page).boundingBox())!;
   await page.mouse.move(point.x, dialog.y + dialog.height - 12, { steps: 10 });
   await expect.poll(() => management(page).evaluate((node) => node.scrollTop)).toBeGreaterThan(600);
-  await page.mouse.up();
-  await saved(page);
+  await saveOrder(page, () => page.mouse.up());
   expect((await dashboard(page, app.url)).heatmapRoutines[0].name).not.toBe('Reading');
   await keyboardMove(page, 'Extra 12', 'ArrowUp', 14);
   await expect(names(page, 'heatmap').first()).toHaveText('Extra 12');
