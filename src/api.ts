@@ -1,7 +1,7 @@
 import type { Dashboard } from '../shared/types';
 
-export async function requestDashboard(path = '/api/dashboard', options?: RequestInit): Promise<Dashboard> {
-  const response = await fetch(path, {
+export async function requestDashboard(path = '/api/dashboard', options?: RequestInit, year?: number): Promise<Dashboard> {
+  const response = await fetch(year === undefined ? path : `${path}?year=${year}`, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
   });

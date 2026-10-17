@@ -14,6 +14,8 @@ interface Props {
 
 export function HeatmapEditor({ date, routines, busy, error, onToggle, onClose }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
+  const editable = routines.filter((routine) => routine.deletedOn === null || date < routine.deletedOn);
+  const retained = routines.filter((routine) => routine.deletedOn !== null && date >= routine.deletedOn && routine.completed);
   useEffect(() => {
     const dialog = ref.current!;
     dialog.showModal();
@@ -31,6 +33,16 @@ export function HeatmapEditor({ date, routines, busy, error, onToggle, onClose }
     </div>
     <p className="muted">Heatmap routines · Changes save immediately.</p>
     {error && <p className="management-error" role="alert">{error}</p>}
-    <RoutineChecklist routines={routines} busy={busy} onToggle={onToggle} />
+    {editable.length > 0 && <RoutineChecklist routines={editable} busy={busy} onToggle={onToggle} />}
+    {!editable.length && !retained.length && <p className="empty-state">No heatmap routines to edit for this date.</p>}
+    {retained.length > 0 && <section className="retained-completions" aria-labelledby="retained-heading">
+      <h3 id="retained-heading">Recorded completions</h3>
+      <p className="muted">These routines were deleted. Their saved completions are read-only.</p>
+      <ul className="routine-list">{retained.map((routine) => <li key={routine.id} className="routine completed">
+        <span aria-hidden="true">✓</span>
+        {routine.symbol && <span className="routine-symbol" aria-hidden="true">{routine.symbol}</span>}
+        <span>{routine.name}</span><span className="sr-only">Completed, read-only</span>
+      </li>)}</ul>
+    </section>}
   </dialog>;
 }

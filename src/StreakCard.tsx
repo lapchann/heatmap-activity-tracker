@@ -12,8 +12,8 @@ interface Props {
 export function StreakCard({ routine, today, busy, onToggle }: Props) {
   const [date, setDate] = useState(() => previousDate(today));
   const validDate = isCalendarDate(date) && date <= today;
-  return <section className="panel streak-card" aria-labelledby={`streak-${routine.id}`} style={{ borderTopColor: routine.accentColor }}>
-    <h3 id={`streak-${routine.id}`}><span aria-hidden="true">{routine.symbol}</span> {routine.name}</h3>
+  return <section className="panel streak-card" aria-labelledby={`streak-${routine.id}`}>
+    <h3 id={`streak-${routine.id}`}>{routine.symbol && <span className="routine-symbol" aria-hidden="true">{routine.symbol}</span>} {routine.name}</h3>
     <p className="streak-count"><strong>{routine.streak}</strong> {routine.streak === 1 ? 'day' : 'days'}</p>
     <label className="routine">
       <input type="checkbox" checked={routine.completed} disabled={busy} onChange={(event) => onToggle(routine.id, today, event.target.checked, true)} />

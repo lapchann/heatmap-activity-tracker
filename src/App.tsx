@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { calendarDate, currentStreak } from '../shared/dates';
-import type { Dashboard } from '../shared/types';
+import type { Appearance, Dashboard, RoutineType } from '../shared/types';
 import { requestDashboard } from './api';
 import { Heatmap } from './Heatmap';
 import { RoutineChecklist } from './RoutineChecklist';
 import { RoutineManagement } from './RoutineManagement';
 import { StreakCard } from './StreakCard';
 import { HeatmapEditor } from './HeatmapEditor';
+import { SettingsDialog } from './SettingsDialog';
 
 export function App() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -14,14 +15,21 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const inFlight = useRef(false);
+  // Undefined follows the current year as the local calendar advances.
+  const selectedYear = useRef<number | undefined>(undefined);
   const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [activeDialog, setActiveDialog] = useState<'routines' | 'settings' | null>(null);
+  const manageButton = useRef<HTMLButtonElement>(null);
+  const settingsButton = useRef<HTMLButtonElement>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (year = selectedYear.current) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setLoading(true);
     try {
-      setDashboard(await requestDashboard());
+      const next = await requestDashboard('/api/dashboard', undefined, year);
+      selectedYear.current = next.year === Number(next.today.slice(0, 4)) ? undefined : next.year;
+      setDashboard(next);
       setError(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Could not load your routines.');
@@ -30,6 +38,12 @@ export function App() {
       setLoading(false);
     }
   }, []);
+
+  useLayoutEffect(() => {
+    if (!dashboard) return;
+    document.documentElement.dataset.appearance = dashboard.appearance.mode;
+    document.documentElement.style.setProperty('--theme-color', dashboard.appearance.color);
+  }, [dashboard?.appearance.color, dashboard?.appearance.mode]);
 
   useEffect(() => {
     void refresh();
@@ -52,12 +66,12 @@ export function App() {
     setError(null);
     if (optimistic) setDashboard(optimistic);
     try {
-      setDashboard(await requestDashboard(path, { method, body: JSON.stringify(body) }));
+      setDashboard(await requestDashboard(path, { method, body: JSON.stringify(body) }, selectedYear.current));
       return true;
     } catch (error) {
       setDashboard(previous);
       // A response can be lost after a successful write. Re-read before reporting failure.
-      try { setDashboard(await requestDashboard()); } catch { /* Keep the last confirmed snapshot. */ }
+      try { setDashboard(await requestDashboard('/api/dashboard', undefined, selectedYear.current)); } catch { /* Keep the last confirmed snapshot. */ }
       setError(error instanceof Error ? error.message : 'Could not save this change. Please try again.');
       return false;
     } finally {
@@ -66,17 +80,38 @@ export function App() {
     }
   }
 
+  function changeAppearance(appearance: Appearance) {
+    if (dashboard) void mutate('/api/settings', 'PUT', appearance, { ...dashboard, appearance });
+  }
+
+  function reorder(type: RoutineType, ids: number[]) {
+    if (!dashboard) return Promise.resolve(false);
+    const key = type === 'heatmap' ? 'heatmapRoutines' : 'streakRoutines';
+    const ordered = ids.map((id, position) => ({ ...dashboard[key].find((routine) => routine.id === id)!, position }));
+    return mutate('/api/routines/order', 'PUT', { type, ids }, { ...dashboard, [key]: ordered });
+  }
+
+  function closeDialog() {
+    const opener = activeDialog === 'routines' ? manageButton : settingsButton;
+    setActiveDialog(null);
+    opener.current?.focus({ preventScroll: true });
+  }
+
+  const heatmapHistory = dashboard ? [...dashboard.heatmapRoutines, ...dashboard.deletedHeatmapRoutines]
+    .sort((a, b) => a.position - b.position || a.id - b.id) : [];
+
   function toggle(id: number, date: string, completed: boolean, todayOnly = false) {
     if (!dashboard) return;
-    const heatmapRoutine = dashboard.heatmapRoutines.find((routine) => routine.id === id);
+    const heatmapRoutine = heatmapHistory.find((routine) => routine.id === id);
     const optimistic: Dashboard = { ...dashboard };
     if (heatmapRoutine) {
+      if (heatmapRoutine.deletedOn !== null && date >= heatmapRoutine.deletedOn) return;
       optimistic.heatmapRoutines = dashboard.heatmapRoutines.map((r) => r.id === id && date === dashboard.today ? { ...r, completed } : r);
       optimistic.days = dashboard.days.map((day) => {
         if (day.date !== date) return day;
         const ids = new Set(day.completedRoutines.map((r) => r.id));
         if (completed) ids.add(id); else ids.delete(id);
-        const completedRoutines = dashboard.heatmapRoutines.filter((r) => ids.has(r.id)).map(({ id, name, symbol }) => ({ id, name, symbol }));
+        const completedRoutines = heatmapHistory.filter((r) => ids.has(r.id)).map(({ id, name, symbol }) => ({ id, name, symbol }));
         return { ...day, count: completedRoutines.length, completedRoutines };
       });
     } else {
@@ -94,17 +129,28 @@ export function App() {
   const editingDay = dashboard?.days.find((day) => day.date === editingDate);
   return <main>
     <header className="page-header">
-      <div><p className="eyebrow">Small actions. Steady progress.</p><h1>Core Routine</h1></div>
+      <h1 className="sr-only">Routine dashboard</h1>
       {dashboard && <time dateTime={dashboard.today}>{calendarDate(dashboard.today).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</time>}
+      <div className="dashboard-actions">
+        <button ref={manageButton} type="button" className="manage-button" aria-label="Manage routines" title="Manage routines" aria-haspopup="dialog" disabled={!dashboard} onClick={() => { setEditingDate(null); setActiveDialog('routines'); }}>+</button>
+        <button ref={settingsButton} type="button" className="manage-button settings-button" aria-label="Settings" title="Settings" aria-haspopup="dialog" disabled={!dashboard} onClick={() => { setEditingDate(null); setActiveDialog('settings'); }}>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m9 3-.6 2.3-1.5.9-2.3-.6-3 5.2L3.3 12v1.7L1.6 15l3 5.2 2.3-.6 1.5.9L9 23h6l.6-2.5 1.5-.9 2.3.6 3-5.2-1.7-1.3V12l1.7-1.2-3-5.2-2.3.6-1.5-.9L15 3Z" transform="translate(1.2 -1) scale(.9)" />
+            <circle cx="12" cy="11.6" r="3.3" />
+          </svg>
+        </button>
+      </div>
     </header>
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => void refresh()} disabled={busy || loading}>Retry loading</button></div>}
     {!dashboard && <p role="status" className="panel">{loading ? 'Loading your routines…' : 'Your dashboard is unavailable. Retry loading to reconnect.'}</p>}
     {dashboard && <>
       <div className="dashboard-columns">
         <div className="main-column">
-          <Heatmap key={dashboard.year} year={dashboard.year} today={dashboard.today} days={dashboard.days} onEdit={setEditingDate} />
-          <section className="panel checklist" aria-labelledby="today-heading">
-            <div className="section-heading"><h2 id="today-heading">Today’s heatmap routines</h2></div>
+          <Heatmap year={dashboard.year} firstYear={dashboard.firstYear} today={dashboard.today} days={dashboard.days}
+            busy={busy || loading} onYearChange={(year) => void refresh(year)}
+            onEdit={(date) => { if (!busy && !loading) setEditingDate(date); }} />
+          <section className="checklist" aria-labelledby="today-heading">
+            <div className="section-heading"><h2 id="today-heading">Today</h2></div>
             <RoutineChecklist routines={dashboard.heatmapRoutines} busy={busy || loading} onToggle={(id, completed) => toggle(id, dashboard.today, completed, true)} />
           </section>
         </div>
@@ -112,13 +158,15 @@ export function App() {
           <h2 id="streaks-heading">Daily streaks</h2>
           {!dashboard.streakRoutines.length && <p className="panel muted">Add a streak routine in Manage routines to start a daily habit.</p>}
           {dashboard.streakRoutines.map((routine) => <StreakCard key={routine.id} routine={routine} today={dashboard.today} busy={busy || loading} onToggle={toggle} />)}
-          <p className="muted field-help">Yesterday’s streak stays until today ends. Check today to extend it.</p>
         </aside>
       </div>
-      <p className="save-status" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
-      <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error} onMutate={mutate} />
+      <p className="sr-only" role="status">{busy ? 'Saving…' : loading ? 'Refreshing…' : error ? 'Check the message above.' : 'Up to date'}</p>
+      {activeDialog === 'routines' && <RoutineManagement routines={[...dashboard.heatmapRoutines, ...dashboard.streakRoutines]} busy={busy || loading} error={error}
+        onReorder={reorder} onMutate={mutate} onClose={closeDialog} />}
+      {activeDialog === 'settings' && <SettingsDialog appearance={dashboard.appearance} busy={busy || loading} error={error}
+        onAppearanceChange={changeAppearance} onClose={closeDialog} />}
       {editingDay && <HeatmapEditor date={editingDay.date} error={error} busy={busy || loading} onClose={() => setEditingDate(null)}
-        routines={dashboard.heatmapRoutines.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
+        routines={heatmapHistory.map((r) => ({ ...r, completed: editingDay.completedRoutines.some((c) => c.id === r.id) }))}
         onToggle={(id, completed) => toggle(id, editingDay.date, completed)} />}
     </>}
   </main>;
